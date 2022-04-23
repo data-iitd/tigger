@@ -1,0 +1,17 @@
+statsmodels==0.11.0
+matplotlib==2.2.0
+networkx==2.4
+h5py==2.10.0
+numba==0.48.0
+powerlaw==1.4.6
+scipy==1.7.0
+numpy==1.18.1
+pandas==1.0.1
+torch==1.6.0
+scann==1.2.1
+tqdm==4.42.1
+path.py==12.5.0
+preprocess==2.0.0
+python_igraph==0.9.6
+scikit_learn==0.24.2
+Utils==1.0.1
