@@ -183,6 +183,8 @@ config_dir = config_path ### Change in random walks
 isdir = os.path.isdir(config_dir) 
 if not isdir:
     os.mkdir(config_dir)
+isdir = os.path.isdir(config_dir+"/models") 
+if not isdir:
     os.mkdir(config_dir+"/models")
 pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
 pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))

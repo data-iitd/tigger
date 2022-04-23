@@ -244,6 +244,8 @@ config_dir = config_path ### Change in random walks
 isdir = os.path.isdir(config_dir) 
 if not isdir:
     os.mkdir(config_dir)
+isdir = os.path.isdir(config_dir+"/models") 
+if not isdir:
     os.mkdir(config_dir+"/models")
 
 start_node_and_times = [(seq[0][0],seq[0][1],seq[0][2],seq[0][3]) for seq in sequences ]
