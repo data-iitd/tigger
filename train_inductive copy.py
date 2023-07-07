@@ -1,3 +1,4 @@
+#%%
 import random
 import pandas as pd
 from datetime import datetime
@@ -28,43 +29,40 @@ from sklearn.mixture import GaussianMixture
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-import scann
+# import scann
+print("loaded")
+# from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
 
-from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
+#%%
 
+# parser = argparse.ArgumentParser()
+# parser.add_argument("--data_path", help="full path of dataset in csv format(start,end,time)",
+#                     type=str)
+# parser.add_argument("--gpu_num",help="GPU no. to use, -1 in case of no gpu", type=int)
+# parser.add_argument("--config_path",help="full path of the folder where models and related data need to be saved", type=str)
+# parser.add_argument("--num_epochs",help="Number of epochs for training", type=int)
+# parser.add_argument("--graph_sage_embedding_path",help="GraphSage embedding path",type=str)
+# parser.add_argument("--num_clusters",default=500,help="Cluster size for the MND",type=int)
+# parser.add_argument("--window_interactions",default=6,help="Interaction window", type=int)
+# parser.add_argument("--l_w",default=20,help="lw", type=int)
+# parser.add_argument("--filter_walk",default=2,help="filter_walk", type=int)
+# args = parser.parse_args()
+# print(args)
+#%%
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--data_path", help="full path of dataset in csv format(start,end,time)",
-                    type=str)
-parser.add_argument("--gpu_num",help="GPU no. to use, -1 in case of no gpu", type=int)
-parser.add_argument("--config_path",help="full path of the folder where models and related data need to be saved", type=str)
-parser.add_argument("--num_epochs",help="Number of epochs for training", type=int)
-parser.add_argument("--graph_sage_embedding_path",help="GraphSage embedding path",type=str)
-parser.add_argument("--num_clusters",default=500,help="Cluster size for the MND",type=int)
-parser.add_argument("--window_interactions",default=6,help="Interaction window", type=int)
-parser.add_argument("--l_w",default=20,help="lw", type=int)
-parser.add_argument("--filter_walk",default=2,help="filter_walk", type=int)
-
-
-args = parser.parse_args()
-
-
-
-
-print(args)
-data_path = args.data_path
-gpu_num = args.gpu_num
-config_path = args.config_path
-num_epochs = args.num_epochs
-graphsage_embeddings_path = args.graph_sage_embedding_path
-num_clusters = args.num_clusters
-window_interactions = args.window_interactions
-l_w = args.l_w
-filter_walk = args.filter_walk
+data_path = "data/shopping/data.csv"
+gpu_num = -1
+config_path = "temp/"
+num_epochs = 10
+graphsage_embeddings_path = "temp/"
+num_clusters = 500
+window_interactions = 6
+l_w = 20
+filter_walk = 2
 data= pd.read_csv(data_path)
 data = data[['start','end','days']]
 #data = data.drop_duplicates(['start','end','days'])
-
+#%%
 node_set = set(data['start']).union(set(data['end']))
 print("number of nodes,",len(node_set))
 node_set.update('end_node')
@@ -72,7 +70,7 @@ max_days = max(data['days'])
 print("Minimum, maximum timestamps",min(data['days']),max_days)
 data = data.sort_values(by='days',inplace=False)
 print("number of interactions," ,data.shape[0])
-
+#%%
 ### configurations 
 
 strictly_increasing_walks = True
@@ -99,7 +97,7 @@ for start,end,days in data[['start','end','days']].values:
         node_id_to_object[start].as_end_node.append(edge)        
 print("length of edges,", len(edges), " length of nodes,", len(node_id_to_object))
 
-
+#%%
 # define the sample per edge
 ct = 0
 #for edge in tqdm(edges): 
@@ -531,3 +529,5 @@ for epoch in range(0,num_epochs+1):
         best_elstm = copy.deepcopy(elstm.state_dict())
         torch.save(state, config_dir+"/models/best_model.pth".format(str(epoch)))
 
+
+# %%

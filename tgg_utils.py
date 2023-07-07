@@ -175,6 +175,7 @@ class Node():
         self.id = id
         self.__dict__.update(kwargs)
         
+        
 def prepare_alias_table_for_edge(edge,incoming = False,window_interactions = None):
     if not incoming:
         if window_interactions is None:
@@ -195,6 +196,32 @@ def prepare_alias_table_for_edge(edge,incoming = False,window_interactions = Non
     nbr_sample_probs = [float(prob)/norm_const for prob in time_diffs]
     J, q  = alias_setup(nbr_sample_probs)
     return nbr_sample_probs,J,q
+
+def prepare_sample_probs(edge):
+    if len(edge.outgoing_edges) == 0:
+        return []
+    out_degree = len(edge.outgoing_edges)
+    nbr_sample_probs = [1.0 / float(out_degree)] * out_degree
+    return nbr_sample_probs
+
+def run_uniform_random_walk(edge, max_length=20):
+    random_walk = [edge]
+    done = False
+    ct = 1
+    while ct<max_length and not done: 
+        if len(edge.outgoing_edges) == 0:
+            done = True
+            random_walk.append(Edge(start=edge.end, end='end_node', attributes=np.zeros(edge.attributes.shape)))
+        else:
+            edge = np.random.choice(edge.outgoing_edges, 1, edge.out_nbr_sample_probs)[0]
+            random_walk.append(edge)
+            ct += 1
+    return random_walk
+            
+    
+    
+
+
 def run_random_walk_without_temporal_constraints(edge,max_length=20,delta = 0):
     rw = []
         #max_length = random.randint(20,50)
@@ -236,12 +263,16 @@ def clean_random_walk(rw):  ### essentially if next time stamp is same then it m
             cur_time = wk[2]
             cur_nodes = [wk[0],wk[1]]
     return newrw
+
 def filter_rw(rw,cut_off=6):
     if len(rw) >= cut_off:
         return True
     else:
         return False
-    
+  
+def convert_walk_to_edge_node_seq(rw, vocab):
+    """converts the random walk of edges to a list of tuples with edge attributed and vocab id of end node"""
+    return [(e.attributes, vocab[e.end]) for e in rw]  
     
 def convert_walk_to_seq(rw):
     seq = [(rw[1][0],rw[0])]

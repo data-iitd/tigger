@@ -1,3 +1,4 @@
+#%%
 import random
 import pandas as pd
 from datetime import datetime
@@ -28,119 +29,72 @@ from sklearn.mixture import GaussianMixture
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-import scann
+from sklearn.neighbors import KDTree
+# import scann
+print("loaded")
+# from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
 
-from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
+#%%
 
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--data_path", help="full path of dataset in csv format(start,end,time)",
-                    type=str)
-parser.add_argument("--gpu_num",help="GPU no. to use, -1 in case of no gpu", type=int)
-parser.add_argument("--config_path",help="full path of the folder where models and related data need to be saved", type=str)
-parser.add_argument("--num_epochs",help="Number of epochs for training", type=int)
-parser.add_argument("--graph_sage_embedding_path",help="GraphSage embedding path",type=str)
-parser.add_argument("--num_clusters",default=500,help="Cluster size for the MND",type=int)
-parser.add_argument("--window_interactions",default=6,help="Interaction window", type=int)
-parser.add_argument("--l_w",default=20,help="lw", type=int)
-parser.add_argument("--filter_walk",default=2,help="filter_walk", type=int)
-
-
-args = parser.parse_args()
+data_path = "data/bitcoin/edgelist_with_attributes.parquet"
+gpu_num = -1
+config_path = "temp/"
+num_epochs = 10
+graphsage_embeddings_path = "data/bitcoin/node_attr.parquet"
+num_clusters = 500
+window_interactions = 6
+l_w = 20
+filter_walk = 2
+data= pd.read_parquet(data_path)
 
 
-
-
-print(args)
-data_path = args.data_path
-gpu_num = args.gpu_num
-config_path = args.config_path
-num_epochs = args.num_epochs
-graphsage_embeddings_path = args.graph_sage_embedding_path
-num_clusters = args.num_clusters
-window_interactions = args.window_interactions
-l_w = args.l_w
-filter_walk = args.filter_walk
-data= pd.read_csv(data_path)
-data = data[['start','end','days']]
-#data = data.drop_duplicates(['start','end','days'])
-
+#%% Prep node_set
 node_set = set(data['start']).union(set(data['end']))
 print("number of nodes,",len(node_set))
-node_set.update('end_node')
-max_days = max(data['days'])
-print("Minimum, maximum timestamps",min(data['days']),max_days)
-data = data.sort_values(by='days',inplace=False)
+# node_set.update('end_node')
 print("number of interactions," ,data.shape[0])
+edge_attr_cols = [c for c in data.columns if c not in ['start', 'end']]
+print(f"attributes found for edges: {edge_attr_cols}")
 
-### configurations 
-
-strictly_increasing_walks = True
-num_next_edges_to_be_stored = 100
-
-# create node and edge objects with links lists.
+#%% create node and edge objects with links lists.
 edges = []
 node_id_to_object = {}
-undirected=True
-for start,end,days in data[['start','end','days']].values:
+for row in data.values:
+    start = row[0] 
+    end = row[1]
+    
+    # add start and end node to node_dict
     if start not in node_id_to_object:
-        node_id_to_object[start] = Node(id=start,as_start_node= [],as_end_node=[])
+        node_id_to_object[start] = Node(id=start, as_start_node=[], as_end_node=[])
     if end not in node_id_to_object:
-        node_id_to_object[end] = Node(id=end,as_start_node= [],as_end_node=[])
+        node_id_to_object[end] = Node(id=end, as_start_node=[], as_end_node=[])
         
-    edge= Edge(start=start,end=end,time=days,outgoing_edges = [],incoming_edges=[])
+    #add edge to edge dict
+    edge= Edge(start=start,end=end, attributes=row[2:], outgoing_edges = [],incoming_edges=[])
     edges.append(edge) 
-    node_id_to_object[start].as_start_node.append(edge)
-    node_id_to_object[end].as_end_node.append(edge)
-    if undirected:
-        edge= Edge(start=end,end=start,time=days,outgoing_edges = [],incoming_edges=[])
-        edges.append(edge) 
-        node_id_to_object[end].as_start_node.append(edge)
-        node_id_to_object[start].as_end_node.append(edge)        
+    node_id_to_object[start].as_start_node.append(edge)  # add edge to start node list
+    node_id_to_object[end].as_end_node.append(edge)      # add edge to end node list.
 print("length of edges,", len(edges), " length of nodes,", len(node_id_to_object))
 
 
-# define the sample per edge
+#%% define the sample + prob per edge
 ct = 0
 #for edge in tqdm(edges): 
 for edge in edges:
-    # find edges downstream with a later time stamp
-    end_node_edges = node_id_to_object[edge.end].as_start_node
-    index = binary_search_find_time_greater_equal(end_node_edges,edge.time,strictly=strictly_increasing_walks)
-    if index != -1:
-        if strictly_increasing_walks:
-            edge.outgoing_edges = end_node_edges[index:index+num_next_edges_to_be_stored]
-        else:
-            edge.outgoing_edges = [item for item in end_node_edges[index:index+num_next_edges_to_be_stored] if item.end != edge.start]
-    # find edges upstream with a later time stamp (undirect!!!)
-    start_node_edges = node_id_to_object[edge.start].as_end_node
-    index = binary_search_find_time_lesser_equal(start_node_edges,edge.time,strictly=strictly_increasing_walks)
-    if index != -1:
-        if strictly_increasing_walks:
-            edge.incoming_edges = start_node_edges[max(0,index-num_next_edges_to_be_stored):index+1]
-        else:
-            edge.incoming_edges = [item for item in start_node_edges[max(0,index-num_next_edges_to_be_stored):index+1] if item.start != edge.end]
-        edge.incoming_edges.reverse()
-
+    end_node_edges = node_id_to_object[edge.end].as_start_node  #get succesive edges
+    edge.outgoing_edges = end_node_edges
+    edge.out_nbr_sample_probs = prepare_sample_probs(edge)
     ct += 1
 
-# set sampling probability
-for edge in tqdm(edges):
-    edge.out_nbr_sample_probs = []
-    edge.in_nbr_sample_probs = []
+dist = [len(e.outgoing_edges) for e in edges]
+plt.hist(dist)
+plt.xscale("log")
 
-    if len(edge.outgoing_edges) >= 1:
-        edge.out_nbr_sample_probs,edge.outJ, edge.outq =  prepare_alias_table_for_edge(edge,incoming=False,window_interactions=window_interactions) ### Gaussian Time Sampling
-        
-    if len(edge.incoming_edges) >= 1:
-        edge.in_nbr_sample_probs,edge.inJ, edge.inq =  prepare_alias_table_for_edge(edge,incoming=True,window_interactions=2)
 
-# create a vocab for the LSTM
-temporal_graph_original = defaultdict(lambda: defaultdict(lambda:defaultdict(lambda: 0)))
-for start,end,day in data[['start','end','days']].values:
-    temporal_graph_original[day][start][end] += 1
-    if undirected:
-        temporal_graph_original[day][end][start] += 1
+#%% create a vocab for the LSTM
+graph_original = defaultdict(lambda: defaultdict(lambda: 0))
+for start,end in data[['start','end']].values:
+    graph_original[start][end] += 1
 vocab = {'<PAD>': 0,'end_node':1}
 for node in data['start']:
     if node not in vocab:
@@ -153,44 +107,36 @@ print("Id of end node , ",vocab['end_node'])
 pad_token = vocab['<PAD>']
 
 
-# create random walks + sequences
+#%% create random walks + sequences
 def sample_random_Walks():
     print("Running Random Walk, Length of edges, ", len(edges))
     random_walks = []
     for edge in edges:
-        random_walks.append(run_random_walk_without_temporal_constraints(edge,l_w,1))
+        random_walks.append(run_uniform_random_walk(edge,l_w))
     print("length of collected random walks,", len(random_walks))
     random_walks = [item for item in random_walks if item is not None]
     print("length of collected random walks after removing None,", len(random_walks))
-    random_walks = [clean_random_walk(item) for item in random_walks]
-    random_walks = [item for item in random_walks if filter_rw(item,filter_walk)]
+    # random_walks = [clean_random_walk(item) for item in random_walks]  # not needed
+    random_walks = [item for item in random_walks if filter_rw(item,filter_walk)]  # ensure minimum walk length
     print("Length of random walks after removing short ranadom walks", len(random_walks))
     return random_walks
-def get_sequences_from_random_walk(random_walks):
-    sequences = [convert_walk_to_seq(item) for item in random_walks]
-    sequences = [convert_seq_to_id(vocab, item) for item in sequences]
-    sequences = [get_time_delta(item,0) for item in sequences]
+
+def get_sequences_from_random_walk(random_walks, vocab):
+    sequences = [convert_walk_to_edge_node_seq(walk, vocab) for walk in random_walks]
     return sequences
 random_walks = sample_random_Walks()
-sequences = get_sequences_from_random_walk(random_walks)
+sequences = get_sequences_from_random_walk(random_walks, vocab)
 print("Average length of random walks")
 lengths = []
 for wk in random_walks:
     lengths.append(len(wk))
 print("Mean length {} and Std deviation {}".format(str(np.mean(lengths)),str(np.std(lengths))))
 
-inter_times = []
-for seq in sequences:
-    for item in seq:
-        inter_times.append(np.log(item[2]))
-mean_log_inter_time = np.mean(inter_times)
-std_log_inter_time = np.std(inter_times)
-print("mean log inter time and std log inter time ", mean_log_inter_time,std_log_inter_time)
+#%% create node embedding matrix
 
+node_embeddings_feature = pd.read_parquet(graphsage_embeddings_path).values 
 
-node_embeddings_feature = pickle.load(open(graphsage_embeddings_path,"rb"))  ### We tried deep walk or node2vec embeddings
-
-node_emb_size = 128
+node_emb_size = 5
 node_embedding_matrix = np.zeros((len(vocab),node_emb_size))
 for item in vocab:
     if item == '<PAD>':
@@ -202,23 +148,24 @@ for item in vocab:
     index= vocab[item]
     node_embedding_matrix[index] = arr
 print("Node embedding matrix, shape,", node_embedding_matrix.shape)
-normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_matrix[1:], axis=1)[:, np.newaxis]
+# create row normalized dataset excluding <padding>
+normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_matrix[1:], axis=1)[:, np.newaxis]  
+#%%
 
-searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
-    num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
-    2, anisotropic_quantization_threshold=0.2).reorder(100).build()
-searcher_1 = scann.scann_ops_pybind.builder(normalized_dataset, 1, "dot_product").tree(
-    num_leaves=1000, num_leaves_to_search=1000, training_sample_size=3000).score_ah(
-    2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+# searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
+#     num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
+#     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+# searcher_1 = scann.scann_ops_pybind.builder(normalized_dataset, 1, "dot_product").tree(
+#     num_leaves=1000, num_leaves_to_search=1000, training_sample_size=3000).score_ah(
+#     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
 
-pca = PCA(n_components=110)
+searcher = KDTree(normalized_dataset, leaf_size=40)
+searcher_1 = KDTree(normalized_dataset, leaf_size=40)
+
+#%% reduce dim and cluster
+pca = PCA(n_components=3)  # PCA(n_components=110)
 node_embedding_matrix_pca = pca.fit_transform(node_embedding_matrix[2:]) ### since 0th and 1st index is of padding and end node
 print("PCA variance explained",np.sum(pca.explained_variance_ratio_))
-pca_2 = PCA(n_components=2)
-node_embedding_matrix_pca_2 = pca_2.fit_transform(node_embedding_matrix_pca)
-print(np.sum(pca_2.explained_variance_ratio_))
-
-
 
 kmeans = KMeans(n_clusters=num_clusters, random_state=0,max_iter=10000).fit(node_embedding_matrix_pca)
 labels = kmeans.labels_
@@ -239,10 +186,11 @@ print("num_components ",num_components)
 reverse_vocab= {value:key for key,value in vocab.items() }
 
 def add_cluster_id(sequence,labels):
-    return [(a,b,c,labels[a]) for a,b,c in sequence]
+    # edge attribute, node id in vocab, cluster_id
+    return [(a,b,labels[b]) for a,b in sequence]
 sequences = [add_cluster_id(sequence,cluster_labels) for sequence in sequences]
 
-
+#%%
 import os
 import json
 import pickle
@@ -531,3 +479,5 @@ for epoch in range(0,num_epochs+1):
         best_elstm = copy.deepcopy(elstm.state_dict())
         torch.save(state, config_dir+"/models/best_model.pth".format(str(epoch)))
 
+
+# %%

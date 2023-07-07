@@ -1,24 +1,13 @@
-# TIGGER: Scalable Generative Modelling for Temporal Interaction Graphs
+# TIGGER_adj: Scalable Generative Modelling for directed Graphs with node and edge attributes.
 
-This repository contains the code of paper [TIGGER: Scalable Generative Modelling for Temporal Interaction Graphs](https://www.cse.iitd.ac.in/~srikanta/publication/aaai-22-b/aaai-22-b.pdf) to appear in main track of AAAI-2022. The code has been run and tested on Python 3.7.6 and Ubuntu 16.04.5 LTS (GNU/Linux 4.15.0-45-generic x86_64).   
-
-
-### Abstract
-There has been a recent surge in *learning generative models* for graphs. While impressive progress has been made on static graphs, work on generative modeling of *temporal graphs* is at a nascent stage with significant scope for improvement. First, existing generative models do not scale with either the time horizon or the number of nodes. Second, existing techniques are *transductive* in nature and thus do not facilitate knowledge transfer. Finally, due to their reliance on one-to-one node mapping from source to the generated graph, existing models leak node identity information and do not allow *up-scaling/down-scaling* the source graph size. In this paper, we bridge these gaps with a novel generative model called TIGGER. TIGGER derives its power through a combination of *temporal point processes* with *auto-regressive* modeling enabling both transductive and inductive variants. Through extensive experiments on real datasets, we establish TIGGER generates graphs of superior fidelity, while also being up to 3 orders of magnitude faster than the state-of-the-art.
+This repo contains and adjusted version of the original TIGGER algorithm. [TIGGER: Scalable Generative Modelling for Temporal Interaction Graphs](https://www.cse.iitd.ac.in/~srikanta/publication/aaai-22-b/aaai-22-b.pdf) to appear in main track of AAAI-2022. The code has been run and tested on Python 3.7.6 and Ubuntu 16.04.5 LTS (GNU/Linux 4.15.0-45-generic x86_64).   
 
 
-## Citation
+It has remove the temporal aspects and instead included node and edge attributes.
 
-```
-@inproceedings{gupta2022tigger,
- acceptance = {0.15},
- author = {Shubham Gupta and Sahil Manchanda and Sayan Ranu and Srikanta Bedathur},
- booktitle = {Proc. of the 36th AAAI Conference on Artificial Intelligence (AAAI)},
- title = {TIGGER: Scalable Generative Modelling for Temporal Interaction Graphs (to appear)},
- year = {2022}
-}
 
-```
+# Work in progress
+
 
 *** 
 ### Code Description
