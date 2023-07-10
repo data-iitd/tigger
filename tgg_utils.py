@@ -279,6 +279,7 @@ def convert_walk_to_seq(rw):
     for item in rw[1:]:
         seq.append((item[1],item[2]))
     return seq
+
 def convert_seq_to_id(vocab,seq):
     nseq = []
     for item in seq:

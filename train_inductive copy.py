@@ -29,9 +29,10 @@ from sklearn.mixture import GaussianMixture
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from sklearn.neighbors import KDTree
 # import scann
 print("loaded")
-# from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
+from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
 
 #%%
 
@@ -50,11 +51,11 @@ print("loaded")
 # print(args)
 #%%
 
-data_path = "data/shopping/data.csv"
+data_path = "data/bitcoin/data.csv"
 gpu_num = -1
 config_path = "temp/"
-num_epochs = 10
-graphsage_embeddings_path = "temp/"
+num_epochs = 1
+graphsage_embeddings_path = "graphsage_embeddings/bitcoin/embeddings.pkl"
 num_clusters = 500
 window_interactions = 6
 l_w = 20
@@ -202,12 +203,15 @@ for item in vocab:
 print("Node embedding matrix, shape,", node_embedding_matrix.shape)
 normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_matrix[1:], axis=1)[:, np.newaxis]
 
-searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
-    num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
-    2, anisotropic_quantization_threshold=0.2).reorder(100).build()
-searcher_1 = scann.scann_ops_pybind.builder(normalized_dataset, 1, "dot_product").tree(
-    num_leaves=1000, num_leaves_to_search=1000, training_sample_size=3000).score_ah(
-    2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+# searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
+#     num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
+#     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+# searcher_1 = scann.scann_ops_pybind.builder(normalized_dataset, 1, "dot_product").tree(
+#     num_leaves=1000, num_leaves_to_search=1000, training_sample_size=3000).score_ah(
+#     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+    
+searcher = KDTree(normalized_dataset, leaf_size=40)
+searcher_1 = KDTree(normalized_dataset, leaf_size=40)
 
 pca = PCA(n_components=110)
 node_embedding_matrix_pca = pca.fit_transform(node_embedding_matrix[2:]) ### since 0th and 1st index is of padding and end node
@@ -237,9 +241,18 @@ print("num_components ",num_components)
 reverse_vocab= {value:key for key,value in vocab.items() }
 
 def add_cluster_id(sequence,labels):
+    """_summary_
+    Return sequences of sequence. with every seq being a list of tupple
+    with every tupple:
+    (vocab[node], days, delta, cluster_label[node])
+    """
     return [(a,b,c,labels[a]) for a,b,c in sequence]
 sequences = [add_cluster_id(sequence,cluster_labels) for sequence in sequences]
 
+
+
+
+#%%
 
 import os
 import json
@@ -252,14 +265,15 @@ isdir = os.path.isdir(config_dir+"/models")
 if not isdir:
     os.mkdir(config_dir+"/models")
 
+# list of first node in sequences
 start_node_and_times = [(seq[0][0],seq[0][1],seq[0][2],seq[0][3]) for seq in sequences ]
 
-pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))
-pickle.dump(cluster_labels,open(config_dir+"/cluster_labels.pkl","wb"))
-pickle.dump(pca,open(config_dir+"/pca.pkl","wb"))
-pickle.dump(kmeans,open(config_dir+"/kmeans.pkl","wb"))
-pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
-np.save(open(config_dir+"/node_embedding_matrix.npy","wb"),node_embedding_matrix)
+# pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))
+# pickle.dump(cluster_labels,open(config_dir+"/cluster_labels.pkl","wb"))
+# pickle.dump(pca,open(config_dir+"/pca.pkl","wb"))
+# pickle.dump(kmeans,open(config_dir+"/kmeans.pkl","wb"))
+# pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
+# np.save(open(config_dir+"/node_embedding_matrix.npy","wb"),node_embedding_matrix)
 
 def get_X_Y_T_CID_from_sequences(sequences):  ### This also need to provide the cluster id of the 
     seq_X = []
@@ -343,6 +357,8 @@ def data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_len
     seq_XCID = [seq_XCID[i] for i in indices]
     seq_YCID = [seq_YCID[i] for i in indices]
     return seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID
+
+
 seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID = get_X_Y_T_CID_from_sequences(sequences)
 print("Max lengths of walks", max_len)
 seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID = data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
@@ -407,7 +423,7 @@ print("Computation device, ", device)
 
 batch_size = 128  ### Experiment wit 
 
-
+#%%
 
 import copy
 
@@ -431,7 +447,7 @@ optimizer = optim.Adam(elstm.parameters(), lr=.001)
 num_params = sum(p.numel() for p in elstm.parameters() if p.requires_grad)
 print(" ##### Number of parameters#### " ,num_params)
 
-    
+ #%%   
 
 for epoch in range(0,num_epochs+1):
     print("KL weight is , ", kl_weight)
@@ -510,7 +526,7 @@ for epoch in range(0,num_epochs+1):
     #break
     if epoch%20 == 0:
         print("Running evaluation")
-        evaluate_model(elstm)
+        # evaluate_model(elstm)
     state = {
         'model':elstm.state_dict(),
         'optimizer': optimizer.state_dict(),

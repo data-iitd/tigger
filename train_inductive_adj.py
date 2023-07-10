@@ -1,4 +1,6 @@
 #%%
+import os
+import pickle
 import random
 import pandas as pd
 from datetime import datetime
@@ -11,11 +13,11 @@ import argparse
 import numpy as np
 import pickle
 import time
+import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-import sklearn
 from sklearn.model_selection import train_test_split
 import csv
 from torch.autograd import Variable
@@ -32,7 +34,7 @@ import matplotlib.cm as cm
 from sklearn.neighbors import KDTree
 # import scann
 print("loaded")
-# from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_rate,get_time_mse,get_topk_event_prediction_rate
+from model_classes.inductive_model import EdgeNodeLSTM, get_topk_event_prediction_rate
 
 #%%
 
@@ -40,7 +42,7 @@ data_path = "data/bitcoin/edgelist_with_attributes.parquet"
 gpu_num = -1
 config_path = "temp/"
 num_epochs = 10
-graphsage_embeddings_path = "data/bitcoin/node_attr.parquet"
+graphsage_embeddings_path = "graphsage_embeddings/bitcoin/embeddings.pkl"
 num_clusters = 500
 window_interactions = 6
 l_w = 20
@@ -124,6 +126,7 @@ def sample_random_Walks():
 def get_sequences_from_random_walk(random_walks, vocab):
     sequences = [convert_walk_to_edge_node_seq(walk, vocab) for walk in random_walks]
     return sequences
+
 random_walks = sample_random_Walks()
 sequences = get_sequences_from_random_walk(random_walks, vocab)
 print("Average length of random walks")
@@ -134,9 +137,9 @@ print("Mean length {} and Std deviation {}".format(str(np.mean(lengths)),str(np.
 
 #%% create node embedding matrix
 
-node_embeddings_feature = pd.read_parquet(graphsage_embeddings_path).values 
+node_embeddings_feature = pickle.load(open(graphsage_embeddings_path,"rb"))  ### We tried deep walk or node2vec embeddings
 
-node_emb_size = 5
+node_emb_size = 128
 node_embedding_matrix = np.zeros((len(vocab),node_emb_size))
 for item in vocab:
     if item == '<PAD>':
@@ -149,7 +152,8 @@ for item in vocab:
     node_embedding_matrix[index] = arr
 print("Node embedding matrix, shape,", node_embedding_matrix.shape)
 # create row normalized dataset excluding <padding>
-normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_matrix[1:], axis=1)[:, np.newaxis]  
+normalized_dataset = node_embedding_matrix / np.linalg.norm(node_embedding_matrix, axis=1)[:, np.newaxis] 
+normalized_dataset[0] = 0  #set padding back to 0 
 #%%
 
 # searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
@@ -159,8 +163,8 @@ normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_m
 #     num_leaves=1000, num_leaves_to_search=1000, training_sample_size=3000).score_ah(
 #     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
 
-searcher = KDTree(normalized_dataset, leaf_size=40)
-searcher_1 = KDTree(normalized_dataset, leaf_size=40)
+searcher = KDTree(node_embedding_matrix[1:], leaf_size=40)
+searcher_1 = KDTree(normalized_dataset[1:], leaf_size=40)
 
 #%% reduce dim and cluster
 pca = PCA(n_components=3)  # PCA(n_components=110)
@@ -190,10 +194,7 @@ def add_cluster_id(sequence,labels):
     return [(a,b,labels[b]) for a,b in sequence]
 sequences = [add_cluster_id(sequence,cluster_labels) for sequence in sequences]
 
-#%%
-import os
-import json
-import pickle
+#%% prepaire shuffled and padded batches
 config_dir = config_path ### Change in random walks
 isdir = os.path.isdir(config_dir) 
 if not isdir:
@@ -202,101 +203,80 @@ isdir = os.path.isdir(config_dir+"/models")
 if not isdir:
     os.mkdir(config_dir+"/models")
 
-start_node_and_times = [(seq[0][0],seq[0][1],seq[0][2],seq[0][3]) for seq in sequences ]
-
-pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))
-pickle.dump(cluster_labels,open(config_dir+"/cluster_labels.pkl","wb"))
-pickle.dump(pca,open(config_dir+"/pca.pkl","wb"))
-pickle.dump(kmeans,open(config_dir+"/kmeans.pkl","wb"))
-pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
-np.save(open(config_dir+"/node_embedding_matrix.npy","wb"),node_embedding_matrix)
-
 def get_X_Y_T_CID_from_sequences(sequences):  ### This also need to provide the cluster id of the 
     seq_X = []
     seq_Y = []
-    seq_Xt = []
-    seq_Yt = []
-    seq_XDelta = []
-    seq_YDelta = []
+    seq_Xedge = []
+    seq_Yedge = []
     seq_XCID = []
     seq_YCID = []
     for seq in sequences:
-        seq_X.append([item[0] for item in seq[:-1]])  ## O contain node id
-        seq_Y.append([item[0] for item in seq[1:]])
-        seq_Xt.append([item[1] for item in seq[:-1]])   ## 1 contain timestamp
-        seq_Yt.append([item[1] for item in seq[1:]])
-        seq_XDelta.append([item[2] for item in seq[:-1]])   ## 2 contain delta from previous event
-        seq_YDelta.append([item[2] for item in seq[1:]])
-        seq_XCID.append([item[3] for item in seq[:-1]])   ## 3 contains the cluster id
-        seq_YCID.append([item[3] for item in seq[1:]])
+        seq_Xedge.append([list(item[0]) for item in seq[:-1]])  ## O contains edge attributes
+        seq_Yedge.append([list(item[0]) for item in seq[1:]])
+        seq_X.append([item[1] for item in seq[:-1]])   ## 1 contain vocab[node_id]
+        seq_Y.append([item[1] for item in seq[1:]])
+        seq_XCID.append([item[2] for item in seq[:-1]])   ## 2 contains the cluster id
+        seq_YCID.append([item[2] for item in seq[1:]])
     X_lengths = [len(sentence) for sentence in seq_X]
     Y_lengths = [len(sentence) for sentence in seq_Y]
     max_len = max(X_lengths)
-    return seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID
-#seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID = get_X_Y_T_CID_from_sequences(sequences)
+    return seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, max_len, seq_XCID, seq_YCID
 
-def get_batch(start_index,batch_size,seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID):
+def get_batch(start_index,batch_size, seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID, max_len):
+    """Creates padded batch copied to the torch device"""
+    edge_attr_dim = len(seq_Xedge[0][0])  # dimension of the edge attributes
+    
     batch_X = seq_X[start_index:start_index+batch_size]
     batch_Y = seq_Y[start_index:start_index+batch_size]
-    batch_Xt = seq_Xt[start_index:start_index+batch_size]
-    batch_Yt = seq_Yt[start_index:start_index+batch_size] 
-    batch_XDelta = seq_XDelta[start_index:start_index+batch_size]
-    batch_YDelta = seq_YDelta[start_index:start_index+batch_size]   
+    batch_Xedge = seq_Xedge[start_index:start_index+batch_size]
+    batch_Yedge = seq_Yedge[start_index:start_index+batch_size]    
     batch_X_len = X_lengths[start_index:start_index+batch_size]
     batch_Y_len = Y_lengths[start_index:start_index+batch_size]
     batch_XCID = seq_XCID[start_index:start_index+batch_size]
     batch_YCID = seq_YCID[start_index:start_index+batch_size] 
-    max_len = max(batch_X_len)
-    #print(max_len)
+    
     pad_batch_X = np.ones((batch_size, max_len),dtype=np.int64)*pad_token
     pad_batch_Y = np.ones((batch_size, max_len),dtype=np.int64)*pad_token
-    pad_batch_Xt = np.ones((batch_size, max_len),dtype=np.float32)*pad_token
-    pad_batch_Yt = np.ones((batch_size, max_len),dtype=np.float32)*pad_token
-    pad_batch_XDelta = np.ones((batch_size, max_len),dtype=np.float32)*pad_token
-    pad_batch_YDelta = np.ones((batch_size, max_len),dtype=np.float32)*pad_token
+    pad_batch_Xedge = np.ones((batch_size, max_len, edge_attr_dim),dtype=np.float32)*pad_token
+    pad_batch_Yedge = np.ones((batch_size, max_len, edge_attr_dim),dtype=np.float32)*pad_token
     pad_batch_XCID = np.ones((batch_size, max_len),dtype=np.int64)*pad_cluster_id
     pad_batch_YCID = np.ones((batch_size, max_len),dtype=np.int64)*pad_cluster_id
+    
     for i, x_len in enumerate(batch_X_len):
         #print(i,x_len,len(batch_X[i][:x_len]),len(pad_batch_X[i, 0:x_len]))
         pad_batch_X[i, 0:x_len] = batch_X[i][:x_len]
         pad_batch_Y[i, 0:x_len] = batch_Y[i][:x_len]
-        pad_batch_Xt[i, 0:x_len] = batch_Xt[i][:x_len]
-        pad_batch_Yt[i, 0:x_len] = batch_Yt[i][:x_len]
-        pad_batch_XDelta[i, 0:x_len] = batch_XDelta[i][:x_len]
-        pad_batch_YDelta[i, 0:x_len] = batch_YDelta[i][:x_len]
+        pad_batch_Xedge[i, 0:x_len] = batch_Xedge[i][:x_len]
+        pad_batch_Yedge[i, 0:x_len] = batch_Yedge[i][:x_len]
         pad_batch_XCID[i, 0:x_len] = batch_XCID[i][:x_len]
         pad_batch_YCID[i, 0:x_len] = batch_YCID[i][:x_len]
+        
     pad_batch_X =  torch.LongTensor(pad_batch_X).to(device)
     pad_batch_Y =  torch.LongTensor(pad_batch_Y).to(device)
-    pad_batch_Xt =  torch.Tensor(pad_batch_Xt).to(device)
-    pad_batch_Yt =  torch.Tensor(pad_batch_Yt).to(device)
-    pad_batch_XDelta =  torch.Tensor(pad_batch_XDelta).to(device)
-    pad_batch_YDelta =  torch.Tensor(pad_batch_YDelta).to(device)
+    pad_batch_Xedge =  torch.Tensor(pad_batch_Xedge).to(device)
+    pad_batch_Yedge =  torch.Tensor(pad_batch_Yedge).to(device)
     batch_X_len = torch.LongTensor(batch_X_len).to(device)
     batch_Y_len = torch.LongTensor(batch_Y_len).to(device)
     pad_batch_XCID =  torch.LongTensor(pad_batch_XCID).to(device)
     pad_batch_YCID =  torch.LongTensor(pad_batch_YCID).to(device)
-    return pad_batch_X,pad_batch_Y,pad_batch_Xt,pad_batch_Yt,pad_batch_XDelta,pad_batch_YDelta,batch_X_len,batch_Y_len,pad_batch_XCID,pad_batch_YCID
+    
+    return pad_batch_Xedge, pad_batch_Yedge, pad_batch_X, pad_batch_Y, batch_X_len, batch_Y_len, pad_batch_XCID, pad_batch_YCID
 
-def data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID):
+def data_shuffle(seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID):
     indices = list(range(0, len(seq_X)))
     random.shuffle(indices)
     #### Data Shuffling
     seq_X = [seq_X[i] for i in indices]   #### 
     seq_Y = [seq_Y[i] for i in indices]
-    seq_Xt = [seq_Xt[i] for i in indices]
-    seq_Yt = [seq_Yt[i] for i in indices]    
-    seq_XDelta = [seq_XDelta[i] for i in indices]
-    seq_YDelta = [seq_YDelta[i] for i in indices]
+    seq_Xedge = [seq_Xedge[i] for i in indices]
+    seq_Yedge = [seq_Yedge[i] for i in indices]    
     X_lengths = [X_lengths[i] for i in indices]
     Y_lengths = [Y_lengths[i] for i in indices]
     seq_XCID = [seq_XCID[i] for i in indices]
     seq_YCID = [seq_YCID[i] for i in indices]
-    return seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID
-seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID = get_X_Y_T_CID_from_sequences(sequences)
-print("Max lengths of walks", max_len)
-seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID = data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
+    return seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID
 
+#TODO
 def evaluate_model(elstm,batch_size=128):
     elstm.eval()
     running_loss= []
@@ -308,25 +288,28 @@ def evaluate_model(elstm,batch_size=128):
     topk20_event_prediction_rates = []
 
     random_walks = sample_random_Walks()
-    sequences = get_sequences_from_random_walk(random_walks)
+    sequences = get_sequences_from_random_walk(random_walks, vocab)
     sequences = [add_cluster_id(sequence,cluster_labels) for sequence in sequences]
-    seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID= get_X_Y_T_CID_from_sequences(sequences)
-
-    seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID = data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
-
+    
+    seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, max_len, seq_XCID, seq_YCID = get_X_Y_T_CID_from_sequences(sequences)
+    seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID = data_shuffle(seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID)
+    
     for start_index in range(0, len(seq_X),batch_size):
 
         if start_index+batch_size < len(seq_X) and start_index + batch_size < 10000:
             #try:
-                pad_batch_X,pad_batch_Y,pad_batch_Xt,pad_batch_Yt,pad_batch_XDelta,pad_batch_YDelta,batch_X_len,batch_Y_len,pad_batch_XCID,pad_batch_YCID = get_batch(start_index,batch_size,seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
+                pad_batch_Xedge, pad_batch_Yedge, pad_batch_X, pad_batch_Y, batch_X_len, batch_Y_len, pad_batch_XCID, pad_batch_YCID \
+                    = get_batch(start_index,batch_size, seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID, max_len)
                 mask_distribution = pad_batch_Y!=0
                 mask_distribution = mask_distribution.to(device)
                 num_events_time_loss = mask_distribution.sum().item()
 
-                Y_hat,inter_time_log_loss,elbo,log_dict,Y_clusterid = elstm(X=pad_batch_X,Y=pad_batch_Y,
-                            Xt=pad_batch_Xt,Yt = pad_batch_Yt,
-                            XDelta = pad_batch_XDelta,YDelta = pad_batch_YDelta,
-                            X_lengths= batch_X_len,mask=mask_distribution,XCID=pad_batch_XCID,YCID=pad_batch_YCID,epoch=10,kl_weight=kl_weight)   
+                Y_hat, edge_hat, loss, log_dict, Y_clusterid = elstm(
+                    X=pad_batch_X, Y=pad_batch_Y,
+                    Xedge=pad_batch_Xedge, Yedge = pad_batch_Yedge,
+                    XCID=pad_batch_XCID, YCID=pad_batch_YCID,
+                    X_lengths= batch_X_len, mask=mask_distribution, kl_weight=kl_weight
+                    )
                 Y = pad_batch_Y
                 Y = Y.view(-1)
                 Y_hat = Y_hat.view(-1, Y_hat.shape[-1])   
@@ -334,17 +317,17 @@ def evaluate_model(elstm,batch_size=128):
                 Y_hat = Y_hat.detach().cpu().numpy()
                 Y = Y.detach().cpu().numpy()
                 # neighbors, distances = searcher.search_batched(node_embedding_matrix[:100], leaves_to_search=1000, pre_reorder_num_neighbors=1000)
-                Y_hat, distances = searcher.search_batched(Y_hat, leaves_to_search=1000, pre_reorder_num_neighbors=1000)
-                Y_hat = Y_hat+1
-                topk_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat,k=5,ignore_Y_value=0))
-                topk10_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat,k=10,ignore_Y_value=0))
-                topk20_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat,k=20,ignore_Y_value=0))
+                Y_hat = searcher.query(Y_hat, 20, return_distance=False)
+                Y_hat = Y_hat+1  # correct for the padding value at index 0 that is not in searcher
+                topk_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat, k=5,ignore_Y_value=0))
+                topk10_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat, k=10,ignore_Y_value=0))
+                topk20_event_prediction_rates.append(get_topk_event_prediction_rate(Y,Y_hat, k=20,ignore_Y_value=0))
 
     print("Event prediction rate@top5:,", np.mean(topk_event_prediction_rates))
     print("Event prediction rate@top10:,", np.mean(topk10_event_prediction_rates))
     print("Event prediction rate@top20:,", np.mean(topk20_event_prediction_rates))
 
-
+#%% start of training
 
 if gpu_num == -1:
     device = torch.device("cpu")
@@ -353,41 +336,38 @@ else:
 
 print("Computation device, ", device)
 
-
-
-batch_size = 128  ### Experiment wit 
-
-
-
-import copy
-
+batch_size = 1024  
 wt_update_ct = 0
 debug = False
-print_ct = 10000000
+print_ct = 100
 best_loss = 1000000000
-best_model = None
-celoss = nn.CrossEntropyLoss(ignore_index=-1) #### -1 is padded     
-celoss_cluster = nn.CrossEntropyLoss(ignore_index=pad_cluster_id)
+best_model = None 
 epoch_wise_loss = []
 kl_weight = 0.00001
 
 
-elstm = EventClusterLSTM(vocab=vocab,node_pretrained_embedding = node_embedding_matrix,nb_layers=2, nb_lstm_units=128,time_emb_dim= 64,
-        embedding_dim=128, batch_size= batch_size,device=device,
-        mean_log_inter_time=mean_log_inter_time,
-        std_log_inter_time=std_log_inter_time,num_components=num_components)
+elstm = EdgeNodeLSTM(
+    vocab=vocab, 
+    node_pretrained_embedding = normalized_dataset,
+    nb_layers=2, 
+    nb_lstm_units=128,
+    edge_emb_dim= sequences[0][0][0].shape[0],
+    clust_dim=64, # used for cluster embedding
+    batch_size= batch_size,
+    device=device,
+    num_components=num_components)  # number of clusters
 elstm = elstm.to(device)
 optimizer = optim.Adam(elstm.parameters(), lr=.001)
 num_params = sum(p.numel() for p in elstm.parameters() if p.requires_grad)
 print(" ##### Number of parameters#### " ,num_params)
 
-    
+#%%  
 
 for epoch in range(0,num_epochs+1):
     print("KL weight is , ", kl_weight)
     elstm.train()
     try:
-        print("Epoch and num of batches, :",epoch , len(seq_X)/batch_size)
+        print(f"Epoch: {epoch}")
     except:
         print("Seqx not defined")
     running_loss= []
@@ -402,48 +382,42 @@ for epoch in range(0,num_epochs+1):
     topk10_event_prediction_rates = []
 
     random_walks = sample_random_Walks()
-    sequences = get_sequences_from_random_walk(random_walks)
+    sequences = get_sequences_from_random_walk(random_walks, vocab)
     sequences = [add_cluster_id(sequence,cluster_labels) for sequence in sequences]
-    start_node_and_times += [(seq[0][0],seq[0][1],seq[0][2],seq[0][3]) for seq in sequences ]
-    seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,max_len,seq_XCID,seq_YCID= get_X_Y_T_CID_from_sequences(sequences)
-
-    seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID = data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
-
-
     
-    for start_index in range(0, len(seq_X),batch_size):
+    seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, max_len, seq_XCID, seq_YCID = get_X_Y_T_CID_from_sequences(sequences)
+    seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID = data_shuffle(seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID)
+    
+    for start_index in range(0,1): #range(0, len(seq_X),batch_size):
         if start_index+batch_size < len(seq_X):
             print("\r%d/%d" %(int(start_index),len(seq_X)),end="")
-            pad_batch_X,pad_batch_Y,pad_batch_Xt,pad_batch_Yt,pad_batch_XDelta,pad_batch_YDelta,batch_X_len,batch_Y_len,pad_batch_XCID,pad_batch_YCID = get_batch(start_index,batch_size,seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID)
+            pad_batch_Xedge, pad_batch_Yedge, pad_batch_X, pad_batch_Y, batch_X_len, batch_Y_len, pad_batch_XCID, pad_batch_YCID \
+                = get_batch(start_index,batch_size, seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID, max_len)
             elstm.zero_grad()
             mask_distribution = pad_batch_Y!=0
             mask_distribution = mask_distribution.to(device)
             num_events_time_loss = mask_distribution.sum().item()
-            Y_hat,inter_time_log_loss,elbo,log_dict,Y_clusterid = elstm(X=pad_batch_X,Y=pad_batch_Y,
-                            Xt=pad_batch_Xt,Yt = pad_batch_Yt,
-                            XDelta = pad_batch_XDelta,YDelta = pad_batch_YDelta,
-                            X_lengths= batch_X_len,mask=mask_distribution,XCID=pad_batch_XCID,YCID=pad_batch_YCID,epoch=10,kl_weight=kl_weight)
-            inter_time_log_loss *= mask_distribution
-            loss_time = (-1)*inter_time_log_loss.sum()*1.00/num_events_time_loss
-            Y_clusterid = Y_clusterid.view(-1, Y_clusterid.shape[-1])
-            pad_batch_YCID = pad_batch_YCID.view(-1)
-            loss_cluster = celoss_cluster(Y_clusterid,pad_batch_YCID)
-            loss = elbo+loss_time + loss_cluster
             
+            # forward + backward pas
+            Y_hat, edge_hat, loss, log_dict, Y_clusterid = elstm(
+                X=pad_batch_X, Y=pad_batch_Y,
+                Xedge=pad_batch_Xedge, Yedge = pad_batch_Yedge,
+                XCID=pad_batch_XCID, YCID=pad_batch_YCID,
+                X_lengths= batch_X_len, mask=mask_distribution, kl_weight=kl_weight)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(elstm.parameters(), 1)
             optimizer.step()
+            
+            
             running_loss.append(loss.item())
-            running_event_loss.append(elbo.item())
-            running_time_loss.append(loss_time.item())  
-            running_cluster_loss.append(loss_cluster.item())
-            running_recon_loss.append(log_dict['reconstruction'])
+            running_event_loss.append(log_dict['elbo']), 
+            running_cluster_loss.append(log_dict['cross_entropy_cluster'])
+            running_recon_loss.append(log_dict['reconstruction_ne'])
             running_kl_loss.append(log_dict['kl'])
             wt_update_ct += 1
             if wt_update_ct%print_ct == 0 and debug:
                 print("Running Loss :, ",np.mean(running_loss[-print_ct:]) )
                 print("Running event elbo loss: ", np.mean(running_event_loss[-print_ct:]),np.std(running_event_loss[-print_ct:]))
-                print("Running time log loss: ", np.mean(running_time_loss[-print_ct:]),np.std(running_time_loss[-print_ct:]))
                 print("Running cluster ce loss: ", np.mean(running_cluster_loss[-print_ct:]),np.std(running_cluster_loss[-print_ct:]))
                 print("Running recon elbo loss: ", np.mean(running_recon_loss[-print_ct:]),np.std(running_recon_loss[-print_ct:]))
                 print("Running kl elbo loss: ", np.mean(running_kl_loss[-print_ct:]),np.std(running_kl_loss[-print_ct:]))
@@ -467,12 +441,12 @@ for epoch in range(0,num_epochs+1):
         'loss':np.mean(running_loss)
     }
     epoch_wise_loss.append(np.mean(running_loss))
-    if epoch%20 == 0:
-        torch.save(state, config_dir+"/models/{}.pth".format(str(epoch)))
-        import h5py
-        hf = h5py.File(config_dir+'/start_node_and_times.h5', 'w')
-        hf.create_dataset('1', data=start_node_and_times)
-        hf.close()
+    # if epoch%20 == 0:
+    #     torch.save(state, config_dir+"/models/{}.pth".format(str(epoch)))
+    #     import h5py
+    #     hf = h5py.File(config_dir+'/start_node_and_times.h5', 'w')
+    #     hf.create_dataset('1', data=start_node_and_times)
+    #     hf.close()
     if np.mean(running_loss) < best_loss:
         print("### Saving the best model ####")
         best_loss = np.mean(running_loss)

@@ -655,7 +655,7 @@ def get_time_mse(T,T_hat,Y):
     diff = diff*diff
     return diff.sum()/num_events
     
-def get_topk_event_prediction_rate(Y,Y_hat,k=5,ignore_Y_value = -1): 
+def get_topk_event_prediction_rate(Y, Y_hat, k=5, ignore_Y_value = -1): 
     ### Assumes pad in Y is -1
     ### Y_hat is unnormalized weights
     mask = Y!=ignore_Y_value
@@ -708,3 +708,215 @@ def data_shuffle(seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_len
     seq_XCID = [seq_XCID[i] for i in indices]
     seq_YCID = [seq_YCID[i] for i in indices]
     return seq_X,seq_Y,seq_Xt,seq_Yt,seq_XDelta,seq_YDelta,X_lengths,Y_lengths,seq_XCID,seq_YCID
+
+
+class EdgeNodeLSTM(nn.Module):
+    def __init__(self, vocab, node_pretrained_embedding, nb_layers, num_components, edge_emb_dim, nb_lstm_units=100, clust_dim=3, 
+                 batch_size=3,device='cpu'):
+        super(EdgeNodeLSTM, self).__init__()
+        self.vocab = vocab
+        self.nb_lstm_layers = nb_layers  # number of LSTM layers
+        self.nb_lstm_units = nb_lstm_units  # dimension of hidden layer h
+        self.clust_dim = clust_dim  # dimension of the cluster embedding
+        self.batch_size = batch_size
+        self.edge_emb_dim = edge_emb_dim  # number of edge features
+        # don't count the padding tag for the classifier output
+        self.nb_events = len(self.vocab) - 1
+        self.gnn_dim = node_pretrained_embedding.shape[1]
+        self.edge_emb_dim = edge_emb_dim
+        self.mu_hidden_dim = 100  # dimension between cluster embedding and z_gnn
+        self.num_components = num_components  # number of clusters
+        print("Number of components,", num_components)
+        nb_vocab_words = len(self.vocab)
+
+        # create embedding with the graphsage vector
+        padding_idx = self.vocab['<PAD>']
+        self.gnn_embedding = nn.Embedding(
+            num_embeddings=nb_vocab_words,
+            embedding_dim=self.gnn_dim,
+            padding_idx=padding_idx  # padding index it'll make the whole vector zeros
+        )
+        self.gnn_embedding.weight.data.copy_(torch.from_numpy(node_pretrained_embedding))
+        self.gnn_embedding.weight.requires_grad = False
+        
+        # create cluster embedding
+        self.cluster_embeddings = nn.Embedding(
+            num_embeddings=self.num_components,
+            embedding_dim=self.clust_dim,
+            padding_idx=padding_idx
+        )
+        
+        # design LSTM
+        self.lstm = nn.LSTM(
+            input_size=self.clust_dim + self.gnn_dim + self.edge_emb_dim,   ## cluster + GNN + edge embedding
+            hidden_size=self.nb_lstm_units,
+            num_layers=self.nb_lstm_layers,
+            batch_first=True,
+        )  
+        
+        # output layer which projects back to tag space
+        self.embedding_hidden = nn.Linear(self.gnn_dim,self.gnn_dim)  #re-embedding gnn embedding?
+        self.hidden_to_ne_hidden = nn.Linear(self.nb_lstm_units, 200)  # Z_cluster
+        self.clusterid_hidden = nn.Linear(200,self.num_components)  # Z_cluster to cluster distribution
+        self.cluster_mu = nn.Linear(200,self.mu_hidden_dim*self.num_components)  # mu's per cluster
+        self.cluster_var = nn.Linear(200,self.mu_hidden_dim*self.num_components) # var's per cluster
+        self.gnn_decoder1 = nn.Linear(self.mu_hidden_dim,400)  #layer 1 gnn_decoder
+        self.gnn_decoder2 = nn.Linear(400,self.gnn_dim)  # layer 2 gnn_decoder
+        self.gnn_decoder3 = nn.Linear(self.gnn_dim, self.gnn_dim)  # layer 3 gnn_decoder
+        
+        self.edge_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
+        self.edge_decoder2 = nn.Linear(128,self.edge_emb_dim)  # layer 2 gnn_decoder
+        self.edge_decoder3 = nn.Linear(self.edge_emb_dim, self.edge_emb_dim)  # layer 3 gnn_decoder
+                
+        self.mse_los_gnn = nn.MSELoss(reduction='none')
+        self.mse_loss_edge = nn.MSELoss(reduction='none')
+        self.celoss_cluster = nn.CrossEntropyLoss(ignore_index=0)
+
+        self.relu_cluster = nn.LeakyReLU()  # activation forhidden to determin cluster id
+        self.relu_edge = nn.LeakyReLU()  #activation for reconstruction edge attributes
+        self.relu_gnn = nn.LeakyReLU() 
+        
+        
+        self.device = device
+        
+    def gaussian_likelihood(self, x_hat, logscale, x):
+        scale = torch.exp(logscale/2)
+        mean = x_hat
+        dist = torch.distributions.Normal(mean, scale)
+
+        # measure prob of seeing image under p(x|z)
+        log_pxz = dist.log_prob(x)
+        return log_pxz #.sum(dim=-1)    
+    def event_mse(self,x_hat,x):
+        a =  (x-x_hat)*(x-x_hat)
+        return a.sum(-1)
+    def kl_divergence(self, z, mu, std):
+        # --------------------------
+        # Monte carlo KL divergence
+        # --------------------------
+        # 1. define the first two probabilities (in this case Normal for both)
+        p = torch.distributions.Normal(torch.zeros_like(mu), torch.ones_like(std))
+        q = torch.distributions.Normal(mu, std)
+
+        # 2. get the probabilities from the equation
+        log_qzx = q.log_prob(z)
+        log_pz = p.log_prob(z)
+
+        # kl
+        kl = (log_qzx - log_pz)
+        kl = kl.sum(-1)
+        return kl
+    
+    def init_hidden(self):
+        # the weights are of the form (nb_layers, batch_size, nb_lstm_units)
+        hidden_a = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
+        hidden_b = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
+        return (hidden_a, hidden_b)
+
+    def forward(self, X, Y, Xedge, Yedge, X_lengths, mask, kl_weight, XCID, YCID):
+        # reset the LSTM hidden state. Must be done before you run a new batch. Otherwise the LSTM will treat
+        # a new batch as a continuation of a sequence
+        self.hidden = self.init_hidden()
+        batch_size, seq_len = X.size()
+        
+        # ---------------------
+        # 1. embed the input
+        # --------------------
+        # Dim transformation: (batch_size, seq_len, 1) -> (batch_size, seq_len, embedding_dim)
+
+        X = self.gnn_embedding(X)  # retrieve the gnn embedding from node vocab id
+        X = self.embedding_hidden(X)  #TODO WHY?
+        XCID_embedding = self.cluster_embeddings(XCID)  # retrieve embedding for cluster id
+        X = torch.cat((Xedge, X, XCID_embedding), -1)
+        
+        
+        # ---------------------
+        # 2. Run through RNN
+        # ---------------------
+        # Dim transformation: (batch_size, seq_len, embedding_dim) -> (batch_size, seq_len, nb_lstm_units)
+
+        # pack_padded_sequence so that padded items in the sequence won't be shown to the LSTM
+        X = torch.nn.utils.rnn.pack_padded_sequence(X, X_lengths, batch_first=True,enforce_sorted=False)
+
+        # now run through LSTM
+        X, self.hidden = self.lstm(X, self.hidden)
+
+        # undo the packing operation
+        X, _ = torch.nn.utils.rnn.pad_packed_sequence(X, batch_first=True)
+
+        # ---------------------
+        # 3. Project to tag space
+        # ---------------------
+        # Dim transformation: (batch_size, seq_len, nb_lstm_units) -> (batch_size * seq_len, nb_lstm_units)
+
+        X = X.contiguous()
+        # X = X.view(-1, X.shape[2]) #reshape the data so it goes into the linear layer
+        
+        # Predict cluster id props
+        Y_hat = self.hidden_to_ne_hidden(X)  # Z_cluster
+        Y_hat = self.relu_cluster(Y_hat) ### Introducing non-linearity
+        # Y_hat = Y_hat.view(batch_size, seq_len,Y_hat.shape[-1])
+        Y_clusterid = self.clusterid_hidden(Y_hat)  # prop distrubution over clusters.
+    
+        
+        #  get the mu and variance parameters voor retrieving GNN embedding
+        #TODO need to understand why Y_hat is used as input and not X
+        mu, log_var = self.cluster_mu(Y_hat), self.cluster_var(Y_hat)
+        mu = mu.view(batch_size,seq_len,self.num_components,self.mu_hidden_dim)
+        log_var = log_var.view((batch_size,seq_len,self.num_components,self.mu_hidden_dim))
+        
+        #YCID is expected to have size of batch_size*seq_len
+        if self.training:  # select true cluster during training?
+            Y_clusterid_sampled = YCID.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
+        else:  # select argmax cluster  during inference?
+            Y_clusterid_sampled = torch.argmax(Y_clusterid,dim=2)
+            Y_clusterid_sampled = Y_clusterid_sampled.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
+            
+        # retrieve mu and log_var for y_cluster
+        mu = torch.gather(mu,2,Y_clusterid_sampled).squeeze(2)
+        log_var = torch.gather(log_var,2,Y_clusterid_sampled).squeeze(2)
+            
+        
+        std = torch.exp(log_var / 2)  # determine std for hidden layer z to gnn
+        q = torch.distributions.Normal(mu, std)  # create distribution layer
+        z = q.rsample()  # sample z for reconstruction of gnn embedding + edge atributes
+        
+        # Reconstruct gnn embedding
+        ne_hat = self.gnn_decoder2(self.relu_gnn(self.gnn_decoder1(z)))  # reconstruct  GNN embeding
+        ne_hat = self.gnn_decoder3(ne_hat)  #de layer decoder gnn embedding
+        
+        # Reconstruct gnn embedding
+        edge_hat = self.edge_decoder2(self.relu_edge(self.edge_decoder1(z)))  # reconstruct  GNN embeding
+        edge_hat = self.edge_decoder3(edge_hat)  #de layer decoder gnn embedding
+        
+        # prep y_true
+        Y = self.gnn_embedding(Y)
+        Y_temp = Y  #### Will be used to calculate the elbo loss
+        Y = Y.view(-1,Y.shape[2])
+        
+        # reconstruction loss
+        kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
+        recon_loss_ne = self.mse_los_gnn(ne_hat,Y_temp)
+        recon_loss_ne = recon_loss_ne.sum(-1)*mask
+        recon_loss_edge = self.mse_loss_edge(edge_hat,Yedge)
+        recon_loss_edge = recon_loss_edge.sum(-1)*mask
+        elbo = kl_weight*kl + recon_loss_ne + recon_loss_edge  ### recon_loss 
+        num_events = mask.sum()
+        elbo = elbo.sum()/num_events
+        
+        #cluster loss
+        Y_clusterid = Y_clusterid.view(-1, Y_clusterid.shape[-1])
+        loss_cluster = self.celoss_cluster(Y_clusterid,YCID.view(-1))
+        
+        loss = elbo + loss_cluster
+        
+        log_dict = {
+            'elbo': elbo.item(),
+            'kl': (kl.sum()/num_events).item(),
+            'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),
+            'reconstruction_edge': (recon_loss_edge.sum()/num_events).item(),
+            'cross_entropy_cluster': (loss_cluster.sum()/num_events).item(),
+        }      
+        
+        
+        return ne_hat, edge_hat, loss, log_dict, Y_clusterid
