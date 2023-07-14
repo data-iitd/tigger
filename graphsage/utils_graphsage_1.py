@@ -661,7 +661,7 @@ class GraphSAGE:
             print(f"device is {self.device}")
             
         
-        self.features = nn.Embedding(_N,self.num_feat)
+        self.features = nn.Embedding(_N,self.num_feat).to(self.device)
         self.features.weight = nn.Parameter(torch.FloatTensor(feat_matrix), requires_grad=False)
         self.embedding_dim=embedding_dim
         
