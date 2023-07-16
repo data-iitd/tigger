@@ -63,6 +63,7 @@ def train_and_calculate_graphsage_embedding(init_dict, train_dict):
     train_metrics = graphsagemodel.graphsage_train(**train_dict)
     end = time.process_time_ns()
     print(f"duration {(end-start)/1e9} sec")
+    graphsagemodel.save_embedding(train_dict['dirs']+'/embedding_matrix_final')
     
     return train_metrics
     
@@ -97,8 +98,8 @@ if __name__ == "__main__":
 
     train_dict = {
         'training_epoch': 800,  #20000  # epoch for training
-        'boost_epoch': 80, #4000 # epoch per boosting run
-        'boost_times': 1, #100 # number of boosting runs
+        'boost_epoch': 400, #4000 # epoch per boosting run
+        'boost_times': 2, #100 # number of boosting runs
         'add_edges': 10, 
         'learning_rate': 0.0001,
         'save_number': 0,
