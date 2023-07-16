@@ -10,7 +10,7 @@ class Encoder(nn.Module):
     def __init__(self, features, feature_dim, 
             embed_dim, adj_lists, aggregator,
             num_sample=10,
-            base_model=None, gcn=False, cuda=False, 
+            base_model=None, gcn=False, device='cpu', 
             feature_transform=False): 
         super(Encoder, self).__init__()
 
@@ -24,12 +24,13 @@ class Encoder(nn.Module):
 
         self.gcn = gcn
         self.embed_dim = embed_dim
-        self.cuda = cuda
-        self.aggregator.cuda = cuda
+        self.device = device
+        self.aggregator.device = device
         self.weight = nn.Parameter(
-                torch.FloatTensor(embed_dim, self.feat_dim if self.gcn else 2 * self.feat_dim))
-        self.weight_1 = nn.Linear( self.embed_dim,self.embed_dim)
+                torch.FloatTensor(embed_dim, self.feat_dim if self.gcn else 2 * self.feat_dim).to(self.device))
+        self.weight_1 = nn.Linear(self.embed_dim,self.embed_dim).to(self.device)
         init.xavier_uniform_(self.weight)
+        self.weight.to(self.device)
 
     def forward(self, nodes):
         """
@@ -37,16 +38,12 @@ class Encoder(nn.Module):
 
         nodes     -- list of nodes
         """
-        
         neigh_feats = self.aggregator.forward(nodes, [self.adj_lists[int(node)] for node in nodes], 
                 self.num_sample)
         #print(neigh_feats.shape)
         if not self.gcn:
-            if self.cuda:
-                self_feats = self.features(torch.LongTensor(nodes).cuda())
-            else:
-                self_feats = self.features(torch.LongTensor(nodes))
-            combined = torch.cat([self_feats, neigh_feats], dim=1)
+            self_feats = self.features(torch.LongTensor(nodes).to(self.device))
+            combined = torch.cat([self_feats, neigh_feats], dim=1).to(self.device)
         else:
             combined = neigh_feats
         #combined = F.relu(self.weight.mm(combined.t()))

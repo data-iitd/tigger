@@ -12,7 +12,7 @@ class MeanAggregator(nn.Module):
     """
     Aggregates a node's embeddings using mean of neighbors' embeddings
     """
-    def __init__(self, features, cuda=False, gcn=False): 
+    def __init__(self, features, device='cpu', gcn=False): 
         """
         Initializes the aggregator for a specific graph.
 
@@ -22,9 +22,8 @@ class MeanAggregator(nn.Module):
         """
 
         super(MeanAggregator, self).__init__()
-
-        self.features = features
-        self.cuda = cuda
+        self.device=device
+        self.features=features
         self.gcn = gcn
         
     def forward(self, nodes, to_neighs, num_sample=30):
@@ -37,9 +36,7 @@ class MeanAggregator(nn.Module):
         _set = set
         if not num_sample is None:
             _sample = random.sample
-            samp_neighs = [_set(_sample(to_neigh, 
-                            num_sample,
-                            )) if len(to_neigh) >= num_sample else to_neigh for to_neigh in to_neighs]
+            samp_neighs = [_set(_sample(list(to_neigh), num_sample)) if len(to_neigh) >= num_sample else to_neigh for to_neigh in to_neighs]
         else:
             samp_neighs = to_neighs
 
@@ -51,13 +48,9 @@ class MeanAggregator(nn.Module):
         column_indices = [unique_nodes[n] for samp_neigh in samp_neighs for n in samp_neigh]   
         row_indices = [i for i in range(len(samp_neighs)) for j in range(len(samp_neighs[i]))]
         mask[row_indices, column_indices] = 1
-        if self.cuda:
-            mask = mask.cuda()
+        mask = mask.to(self.device)
         num_neigh = mask.sum(1, keepdim=True)
         mask = mask.div(num_neigh)
-        if self.cuda:
-            embed_matrix = self.features(torch.LongTensor(unique_nodes_list).cuda())
-        else:
-            embed_matrix = self.features(torch.LongTensor(unique_nodes_list))
+        embed_matrix = self.features(torch.LongTensor(unique_nodes_list).to(self.device))
         to_feats = mask.mm(embed_matrix)
         return to_feats

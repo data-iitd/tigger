@@ -1,15 +1,11 @@
 #%%
-import os
-import networkx as nx
-import scipy.sparse as sp
-import numpy as np
-import utils_graphsage_1 as utils
+import torch
+import time
 import utils_graphsage_1
-import torch
-import torch
 from collections import defaultdict
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 #%%
 seed=114514
 np.random.seed(seed)
@@ -23,8 +19,6 @@ torch.cuda.seed_all()
 # pdf['id']=range(1899)
 # pdf.to_parquet("../data/opsahl-ucsocial/node_features.parquet")
 
-# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"]="4"
 
 def get_id(node, node_to_id):
         """check if node is in node_to_id dict and adds when missing"""
@@ -36,7 +30,7 @@ def get_id(node, node_to_id):
         else:
             return node_to_id[node]
 
-def train_and_calculate_graphsage_embedding(data, features, output_path):
+def prep_input_data(data, features):
     """trains graphsage and stores trained model with embedding in the output path"""
     node_to_id = dict()  # dictionary with node ids
     
@@ -57,41 +51,58 @@ def train_and_calculate_graphsage_embedding(data, features, output_path):
     _N = features.shape[0]
     _M = data.shape[0]
     assert _N==len(node_to_id), "N is different from the number of node id's"
-
-
-    # calculate embedding
-    embedding_dim=128
-    epoch = 200  #20000  # epoch for training
-    boost_epoch=400 #4000 # epoch per boosting run
-    boost_times = 3 #100 # number of boosting runs
-    import time
-    # import utils_graphsage_1
-    import importlib
-    importlib.reload(utils_graphsage_1)
-
-    graphsagemodel=utils_graphsage_1.GraphSAGE(_N=_N,
-                                feat_matrix = features.values,
-                                adj_dic=neighbors_dict,
-                                embedding_dim=embedding_dim,
-                                verbose_level=2)
-
-    start = time.process_time_ns()
-    graphsagemodel.graphsage_train(boost_times=boost_times,  # number of boosting runs.
-                                add_edges=1000,  # number of edges added during boosting
-                                training_epoch=epoch,  # epoch for normal training
-                                boost_epoch=boost_epoch,  # epoch for boosting with added edges.
-                                learning_rate=0.001,
-                                save_number=0,
-                                dirs=output_path)
     
+    return ({'_N': _N, 'feat_matrix': features.values, 'adj_dic': neighbors_dict},
+            {'node_to_id': node_to_id})
+    
+
+def train_and_calculate_graphsage_embedding(init_dict, train_dict):
+    graphsagemodel=utils_graphsage_1.GraphSAGE(**init_dict)
+    
+    start = time.process_time_ns()
+    train_metrics = graphsagemodel.graphsage_train(**train_dict)
     end = time.process_time_ns()
     print(f"duration {(end-start)/1e9} sec")
-    #graphsagemodel.save_model(path='graphsage_model_node_type/graph_graphsage.pth',embedding_path='graphsage_model_node_type/embeddings.npy')
+    
+    return train_metrics
+    
 
 # %%
+# calculate embedding
 output_path = 'models/ucsocial'
-data= pd.read_csv("../data/opsahl-ucsocial/data.csv")
+data = pd.read_csv("../data/opsahl-ucsocial/data.csv")
 data = data.drop_duplicates(subset=['start','end'])
 features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
-train_and_calculate_graphsage_embedding(data, features, output_path)
+
+init_dict1 = {
+    'embedding_dim': 128,
+    'verbose_level': 2
+}
+
+train_dict = {
+    'training_epoch': 80000,  #20000  # epoch for training
+    'boost_epoch': 4000, #4000 # epoch per boosting run
+    'boost_times': 0, #100 # number of boosting runs
+    'add_edges': 10, 
+    'learning_rate': 0.0001,
+    'save_number': 0,
+    'dirs': output_path
+}
+
+init_dict2, info_dict = prep_input_data(data, features)
+train_metrics = train_and_calculate_graphsage_embedding({**init_dict1, **init_dict2}, train_dict)
+# %%
+epoch_cnt = 0
+for metrics in train_metrics:
+    epoch =  [x+epoch_cnt for x in metrics['epoch']]
+    plt.plot(epoch, metrics['train_loss'], label=metrics['label'] )
+
+    if 'val_loss' in metrics.keys():
+        epoch =  [x+epoch_cnt for x in metrics['val_epoch']]
+        plt.plot(epoch, metrics['val_loss'], label=metrics['label']+"_val" )
+        
+    epoch_cnt = epoch_cnt + max(metrics['epoch'])/ (len(metrics['epoch']) - 1 ) * len (metrics['epoch'])
+
+plt.legend(bbox_to_anchor=(1.10, 1))
+plt.show()
 # %%

@@ -3,6 +3,8 @@ import scipy.sparse as sp
 import numpy as np
 import igraph
 import powerlaw
+import statistics
+import math
 from scipy.sparse.csgraph import connected_components
 from graphsage.encoders import Encoder
 from graphsage.aggregators import MeanAggregator
@@ -615,9 +617,9 @@ class SupervisedGraphSage(nn.Module):
         return out
 
     def loss(self, edges_list, labels):
-
         scores=self.forward(edges_list)
         return self.xent(scores, labels.squeeze())
+    
     def train_acc(self,x,y):
         #Apply softmax to output. 
         pred=self.forward(x)
@@ -626,9 +628,26 @@ class SupervisedGraphSage(nn.Module):
         pred=(pred>0.5).int()
         ans=torch.sum((pred==true).int()).item()
         return ans/len(pred)
-    def train(self,train,labels,epochs,optimizer, batch_size = 256):
+    
+    def validation_step(self, x_val, y_val, batch_size=1024):
+        batches = int(math.floor(y_val.shape[0]/batch_size))
+        val_loss = []
+        for i in range(batches):
+            x_batch = x_val[range(i*batch_size, (i+1)*batch_size)]
+            y_batch = y_val[range(i*batch_size, (i+1)*batch_size)]
+            loss = self.loss(x_batch, torch.FloatTensor(y_batch).to(self.device))
+            val_loss.append(loss)
+            
+        return statistics.fmean(val_loss)
         
         
+        
+    def train(self,train,labels,epochs,optimizer, x_val = None, y_val = None, batch_size = 1024):
+        
+        train_loss = []
+        val_loss = []
+        epoch_id = []
+        val_epoch = []
         for epoch in range(epochs):
             batch=random.sample(range(len(train)),batch_size)
             start_time = time.time()
@@ -641,8 +660,13 @@ class SupervisedGraphSage(nn.Module):
             end_time = time.time()
             if epoch % 10==0:
                 print('\rEpoch:%d,Loss:%f,estimated time:%.2f'%(epoch, loss.item(),(end_time-start_time)*(epochs-epoch)),end="")
-            if epoch%1000==0:
-                print('\n acc:'+str(self.train_acc(train,labels)))
+                train_loss.append(loss.item())
+                epoch_id.append(epoch)
+            if epoch%100==0 and x_val is not None and y_val is not None:
+                val_loss.append(self.validation_step(x_val, y_val))
+                val_epoch.append(epoch)
+                # print('\n acc:'+str(self.train_acc(train,labels)))
+        return {'train_loss': train_loss, 'epoch': epoch_id, 'val_loss': val_loss, 'val_epoch': val_epoch}
 
 class GraphSAGE:
     
@@ -651,9 +675,14 @@ class GraphSAGE:
         self._M = 0  # this is set during training
         self.adj_dic=adj_dic  # node dict of neighbor list
         self.verbose = verbose_level  # 1) no output, 2) minimum output, 3)performance, 4) debug
-        self.useCuda = False
         self.num_feat=feat_matrix.shape[1]  ### node type 0/ 1
-        self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+        self.device = device
         
         if self.verbose> 1:
             print("number of features", self.num_feat)
@@ -661,14 +690,15 @@ class GraphSAGE:
             print(f"device is {self.device}")
             
         
-        self.features = nn.Embedding(_N,self.num_feat).to(self.device)
+        self.features = nn.Embedding(_N,self.num_feat)
         self.features.weight = nn.Parameter(torch.FloatTensor(feat_matrix), requires_grad=False)
+        self.features.to(self.device)
         self.embedding_dim=embedding_dim
         
-        self.agg1 = MeanAggregator(self.features, cuda=torch.cuda.is_available())
-        self.enc1 = Encoder(self.features, self.num_feat, self.embedding_dim, self.adj_dic, self.agg1, gcn=False, cuda=torch.cuda.is_available())
-        self.agg2 = MeanAggregator(lambda nodes : self.enc1(nodes).t(), cuda=torch.cuda.is_available())
-        self.enc2 = Encoder(lambda nodes : self.enc1(nodes).t(), self.enc1.embed_dim, self.embedding_dim, self.adj_dic, self.agg2,base_model=self.enc1, gcn=False, cuda=torch.cuda.is_available())
+        self.agg1 = MeanAggregator(self.features, device=self.device)
+        self.enc1 = Encoder(self.features, self.num_feat, self.embedding_dim, self.adj_dic, self.agg1, gcn=False, device=self.device)
+        self.agg2 = MeanAggregator(lambda nodes : self.enc1(nodes).t())
+        self.enc2 = Encoder(lambda nodes : self.enc1(nodes).t(), self.enc1.embed_dim, self.embedding_dim, self.adj_dic, self.agg2,base_model=self.enc1, gcn=False, device=self.device)
         if level == 1:
             self.graphsage = SupervisedGraphSage(self.enc1,self._N, device=self.device)
         else:
@@ -697,9 +727,9 @@ class GraphSAGE:
         for idx in range(self._N):
             I_list.append(i)
             J_list.append(idx)
-        node1=torch.Tensor(embedding[I_list,:].astype(float))  #.cuda()
+        node1=torch.Tensor(embedding[I_list,:].astype(float)).to(self.device)
         x=Variable(node1)
-        node2=torch.Tensor(embedding[J_list,:].astype(float))  #.cuda() 
+        node2=torch.Tensor(embedding[J_list,:].astype(float)).to(self.device)
         y=Variable(node2)
         
         out = x*y
@@ -710,42 +740,47 @@ class GraphSAGE:
         return out
 
     def get_embeddings(self):
-        embedding_matrix_torch=torch.t(self.graphsage.enc(range(_N)))
+        embedding_matrix_torch=torch.t(self.graphsage.enc(range(self._N)))
         self.embedding_matrix_numpy=embedding_matrix_torch.detach().to('cpu').numpy()
         return self.embedding_matrix_numpy
 
     def graphsage_train(self,boost_times=20,add_edges=1000,training_epoch=10000,
                         boost_epoch=5000,learning_rate=0.001,save_number=0,dirs='graphsage_model/'):
         
+        train_stats = []  # list to keeptrack of the training results
         if not os.path.exists(dirs):
             os.makedirs(dirs)
         
         # create train, validation and test split together with negative examples.
-        datasets = self.get_train_validation_test_set(0.0, 0.0)
-        datasets_false, exempt_set = self.get_false_edges_datasets(1, 10, 10, datasets)
-  
+        datasets = self.get_train_validation_test_set(0.1, 0.0)
+        datasets_false, exempt_set = self.get_false_edges_datasets(1, 1, 10, datasets)
+          
         train_dataset = np.concatenate([datasets['train_set'], datasets_false['train_set']])
         labels_dataset = np.concatenate([np.ones(len(datasets['train_set'])), np.zeros(len(datasets_false['train_set']))])
+        val_dataset = np.concatenate([datasets['validation_set'], datasets_false['validation_set']])
+        val_label = np.concatenate([np.ones(len(datasets['validation_set'])), np.zeros(len(datasets_false['validation_set']))])
         
         # train graphsage model
         optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate,weight_decay=1e-5)
-        self.graphsage.train(train_dataset,labels_dataset,training_epoch,optimizer)
+        train_metrics = self.graphsage.train(train_dataset,labels_dataset,training_epoch,optimizer, x_val=val_dataset, y_val=val_label)
+        train_metrics['label'] = 'train'
+        train_stats.append(train_metrics)
         self.save_model(path=dirs+'/graphsage'+str(save_number)+'.pth',
                         embedding_path=dirs+'/embedding_matrix'+str(save_number)+'.pth')
-        if self.verbose >= 3:
+        if self.verbose >= 4:
             evaluate_overlap_torch(_N=self._N,
                                 _num_of_edges=self._M,
                                 adj_origin=self.adj_origin,
                                 embedding_matrix_numpy=self.embedding_matrix_numpy,
                                 link_prediction_from_embedding_one_to_other=self.graphsage_link_prediction_from_embedding_one_to_other)
         
-        print('/n Start boosting')
+        print('\n Start boosting')
         for boost_iter in range(boost_times):
             print('boost iter:%d'%(boost_iter ))
             
             cnt=0
             boost_find_iter=0
-            boost_max_find_iter = 100
+            boost_max_find_iter = 10
             while(cnt<add_edges and boost_find_iter<boost_max_find_iter):
                 boost_find_iter+=1
                 if self.verbose >=3:
@@ -771,16 +806,25 @@ class GraphSAGE:
                 print('current training set length: ' + str(len(train_dataset)))
                 print('current save path: ' + dirs+ '/graphsage'+str(save_number)+'_'+str(boost_iter)+'.pth')
             
-            optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate,weight_decay=1e-5)
-            self.graphsage.train(train_dataset, labels_dataset, boost_epoch, optimizer)
+            # optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate,weight_decay=1e-5)
+            boost_metrics = self.graphsage.train(train_dataset, labels_dataset, boost_epoch, optimizer, x_val=val_dataset, y_val=val_label)
+            boost_metrics['label'] = 'boost_'+str(boost_iter)
+            train_stats.append(boost_metrics)
             self.save_model(path=dirs+'/graphsage'+str(save_number)+'_'+str(boost_iter)+'.pth',
                             embedding_path=dirs+'/embedding_matrix'+str(save_number)+'_'+str(boost_iter)+'.pth')
-            if self.verbose >= 3:
+            if self.verbose >= 4:
                 evaluate_overlap_torch(_N=self._N,
                                     _num_of_edges=self._M,
                                     adj_origin=self.adj_origin,
                                     embedding_matrix_numpy=self.embedding_matrix_numpy,
                                     link_prediction_from_embedding_one_to_other=self.graphsage_link_prediction_from_embedding_one_to_other)
+        
+        return train_stats
+    
+    def join_metrics_dics(self, train_metrics, boost_metrics):
+        for k, v in train_metrics.items():
+            train_metrics[k] = v + boost_metrics[k]
+        return train_metrics
             
     def get_train_validation_test_set(self, validation_frac, test_frac):
         """creates a train, validation and test set from the node dict containing the neighbors 
@@ -840,7 +884,6 @@ class GraphSAGE:
             
         return false_datasets, exempt_set
             
-    
     
             
 #GAN part
@@ -933,15 +976,15 @@ def calc_gradient_penalty(netD, real_data, fake_data,batch_size):
     #print ("real_data: ", real_data.size(), fake_data.size(),batch_size)
     alpha = torch.rand(batch_size, 1)
     alpha = alpha.expand_as(real_data)
-    alpha = alpha.cuda()
+    alpha = alpha.to(self.device)
     #print(alpha.size())
     interpolates = alpha * real_data + ((1 - alpha) * fake_data)
-    interpolates = interpolates.cuda()
+    interpolates = interpolates.to(self.device)
     interpolates = autograd.Variable(interpolates, requires_grad=True)
     disc_interpolates = netD(interpolates)
     #print("interpolate size,",disc_interpolates.size())
     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
-                              grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
+                              grad_outputs=torch.ones(disc_interpolates.size()).to(self.device),
                               create_graph=True, retain_graph=True, only_inputs=True)[0]
     #print("Gradient size ",gradients.size())
     gradients = gradients.view(gradients.size(0), -1)
@@ -954,7 +997,7 @@ def eval_plot(netG,embedding_matrix,noise_dim,mmd_beta=1):
     ecdf_embedding_matrix = ECDF(hist_real)
     plt.plot(ecdf_embedding_matrix.x,ecdf_embedding_matrix.y, label="original embedding")
     
-    noise=torch.randn(embedding_matrix.shape[0],noise_dim).cuda()
+    noise=torch.randn(embedding_matrix.shape[0],noise_dim).to(self.device)
     sample=netG(noise).detach().cpu().numpy()
     hist_fake=sklearn.metrics.pairwise_distances(X=sample, metric='euclidean').reshape(-1,)
     ecdf_generate = ECDF(hist_fake)
