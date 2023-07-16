@@ -2,6 +2,7 @@
 import torch
 import time
 import utils_graphsage_1
+from tqdm.auto import tqdm
 from collections import defaultdict
 import numpy as np
 import pandas as pd
@@ -36,7 +37,8 @@ def prep_input_data(data, features):
     
     # Built dict containing a set of neighsbors per node id. 
     neighbors_dict = defaultdict(set) 
-    for start, end in data[['start','end']].values:
+    print("creating neighbors dicts")
+    for start, end in tqdm(data[['start','end']].values):
         start_id = get_id(start, node_to_id)
         end_id = get_id(end, node_to_id)
         neighbors_dict[start_id].add(end_id)
@@ -90,6 +92,9 @@ if __name__ == "__main__":
     data = pd.read_csv("../data/opsahl-ucsocial/data.csv")
     data = data.drop_duplicates(subset=['start','end'])
     features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
+    
+    features = pd.read_parquet("../data_large/10mln_node_features.parquet")
+    data = pd.read_parquet("../data_large/10mln_edge.parquet")
 
     init_dict1 = {
         'embedding_dim': 128,

@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import torch.autograd as autograd
 from torch.autograd import grad as torch_grad
 from statsmodels.distributions.empirical_distribution import ECDF
-
+from tqdm.auto import tqdm
 import torch
 import torch.nn as nn
 import os
@@ -627,6 +627,7 @@ class SupervisedGraphSage(nn.Module):
     
     def validation_step(self, x_val, y_val, batch_size=1024):
         batches = int(math.floor(y_val.shape[0]/batch_size))
+        batch = 2
         val_loss = []
         for i in range(batches):
             x_batch = x_val[range(i*batch_size, (i+1)*batch_size)]
@@ -655,7 +656,7 @@ class SupervisedGraphSage(nn.Module):
             torch.nn.utils.clip_grad_norm_(self.parameters(), 0.005)
             optimizer.step()
             end_time = time.time()
-            if epoch % 10==0:
+            if epoch % 50==0:
                 print('\rEpoch:%d,Loss:%f,estimated time:%.2f'%(epoch, loss.item(),(end_time-start_time)*(epochs-epoch)),end="")
                 train_loss.append(loss.item())
                 epoch_id.append(epoch)
@@ -833,7 +834,8 @@ class GraphSAGE:
         
         #create edge list
         edges = []
-        for src, neighbors in self.adj_dic.items():
+        print("create edge list")
+        for src, neighbors in tqdm(self.adj_dic.items()):
             for dst in neighbors:
                 if dst > src: # avoid duplicates and self loop because edges are in the dict in both directions
                     edges.append((src, dst))
@@ -845,6 +847,7 @@ class GraphSAGE:
         
               
         # create train, validation and test set
+        print("shuffling")
         random.shuffle(edges)
         test_set = edges[:num_test]
         validation_set = edges[num_test: num_test+num_val]
