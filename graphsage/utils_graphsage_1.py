@@ -700,18 +700,14 @@ class GraphSAGE:
             self.graphsage = SupervisedGraphSage(self.enc1,self._N, device=self.device)
         else:
             self.graphsage = SupervisedGraphSage(self.enc2,self._N, device=self.device)
-        embedding_matrix_torch=torch.t(self.graphsage.enc(range(self._N)))
-        self.embedding_matrix_numpy=embedding_matrix_torch.detach().to('cpu').numpy()
         
     
-    def save_model(self,path='graph_graphsage.pth',embedding_path='embeddings'):
-        print("Saving to , ", path , embedding_path)
+    def save_model(self,path='graph_graphsage.pth'):
+        print("Saving to , ", path)
         torch.save(self.graphsage.state_dict(), path)
         
-        embedding_matrix_torch=torch.t(self.graphsage.enc(range(self._N)))
-        self.embedding_matrix_numpy=embedding_matrix_torch.detach().to('cpu').numpy()
-        
-        np.save(embedding_path,self.embedding_matrix_numpy)
+    def save_embedding(self, embedding_path='embeddings'):
+        np.save(embedding_path,self.get_embeddings())
         
     def load_model(self,path='graph_graphsage.pth',embedding_path='embeddings.npy'):
         self.graphsage.load_state_dict(torch.load(path), strict=False)
@@ -737,9 +733,17 @@ class GraphSAGE:
         return out
 
     def get_embeddings(self):
-        embedding_matrix_torch=torch.t(self.graphsage.enc(range(self._N)))
-        self.embedding_matrix_numpy=embedding_matrix_torch.detach().to('cpu').numpy()
-        return self.embedding_matrix_numpy
+        embedding_matrix_numpy = None
+        for i in range(math.floor(self._N / 1024)):
+            # get embedding for range
+            embedding_matrix_torch=torch.t(self.graphsage.enc(range(i*1024, (i+1)*1024)))
+            if embedding_matrix_numpy is None:
+                embedding_matrix_numpy = embedding_matrix_torch.detach().to('cpu').numpy()
+            else:
+                embedding_matrix_numpy = np.vstack(
+                    (embedding_matrix_numpy, embedding_matrix_torch.detach().to('cpu').numpy())
+                )
+        return embedding_matrix_numpy
 
     def graphsage_train(self,boost_times=20,add_edges=1000,training_epoch=10000,
                         boost_epoch=5000,learning_rate=0.001,save_number=0,dirs='graphsage_model/'):
@@ -763,8 +767,8 @@ class GraphSAGE:
         train_metrics = self.graphsage.train(train_dataset,labels_dataset,training_epoch,optimizer, x_val=val_dataset, y_val=val_label)
         train_metrics['label'] = 'train'
         train_stats.append(train_metrics)
-        self.save_model(path=dirs+'/graphsage'+str(save_number)+'.pth',
-                        embedding_path=dirs+'/embedding_matrix'+str(save_number)+'.pth')
+        self.save_model(path=dirs+'/graphsage'+str(save_number)+'.pth')
+        # self.save_embedding(embedding_path=dirs+'/embedding_matrix'+str(save_number)+'.pth'))
         if self.verbose >= 4:
             evaluate_overlap_torch(_N=self._N,
                                 _num_of_edges=self._M,
@@ -804,12 +808,11 @@ class GraphSAGE:
                 print('current training set length: ' + str(len(train_dataset)))
                 print('current save path: ' + dirs+ '/graphsage'+str(save_number)+'_'+str(boost_iter)+'.pth')
             
-            # optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate,weight_decay=1e-5)
             boost_metrics = self.graphsage.train(train_dataset, labels_dataset, boost_epoch, optimizer, x_val=val_dataset, y_val=val_label)
             boost_metrics['label'] = 'boost_'+str(boost_iter)
             train_stats.append(boost_metrics)
-            self.save_model(path=dirs+'/graphsage'+str(save_number)+'_'+str(boost_iter)+'.pth',
-                            embedding_path=dirs+'/embedding_matrix'+str(save_number)+'_'+str(boost_iter)+'.pth')
+            self.save_model(path=dirs+'/graphsage'+str(save_number)+'_'+str(boost_iter)+'.pth')
+            # self.save_embedding(embedding_path=dirs+'/embedding_matrix'+str(save_number)+'_'+str(boost_iter)+'.pth')
             if self.verbose >= 4:
                 evaluate_overlap_torch(_N=self._N,
                                     _num_of_edges=self._M,
