@@ -26,11 +26,9 @@ class Encoder(nn.Module):
         self.embed_dim = embed_dim
         self.device = device
         self.aggregator.device = device
-        self.weight = nn.Parameter(
-                torch.FloatTensor(embed_dim, self.feat_dim if self.gcn else 2 * self.feat_dim).to(self.device))
-        self.weight_1 = nn.Linear(self.embed_dim,self.embed_dim).to(self.device)
-        init.xavier_uniform_(self.weight)
-        self.weight.to(self.device)
+        input_dim_fc1 = self.feat_dim if self.gcn else 2 * self.feat_dim
+        self.fc1 = nn.Linear(input_dim_fc1 ,embed_dim).to(self.device)
+        self.fc2 = nn.Linear(embed_dim, embed_dim).to(self.device)
 
     def forward(self, nodes):
         """
@@ -46,7 +44,8 @@ class Encoder(nn.Module):
             combined = torch.cat([self_feats, neigh_feats], dim=1).to(self.device)
         else:
             combined = neigh_feats
-        #combined = F.relu(self.weight.mm(combined.t()))
-        combined = F.leaky_relu(self.weight.mm(combined.t()),negative_slope=0.03)
-        combined = F.tanh(self.weight_1(combined.t()).t()) ### used for msg network
+        combined = self.fc1(combined)
+        combined = F.leaky_relu(combined, negative_slope=0.03)
+        combined = self.fc2(combined)
+        combined = F.tanh(combined) ### used for msg network
         return combined

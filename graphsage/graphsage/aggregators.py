@@ -37,6 +37,7 @@ class MeanAggregator(nn.Module):
         if not num_sample is None:
             _sample = random.sample
             samp_neighs = [_set(_sample(list(to_neigh), num_sample)) if len(to_neigh) >= num_sample else to_neigh for to_neigh in to_neighs]
+            # samp_neighs = [(random.choices(list(to_neigh), k=num_sample)) for to_neigh in to_neighs]
         else:
             samp_neighs = to_neighs
 

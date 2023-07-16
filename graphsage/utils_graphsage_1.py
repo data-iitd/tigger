@@ -597,17 +597,13 @@ class SupervisedGraphSage(nn.Module):
         
         self.fc1 = nn.Linear(embed_dim,embed_dim).to(self.device)
         self.fc2 = nn.Linear(embed_dim,1).to(self.device)
-        #self.fc3 = nn.Linear(embed_dim,embed_dim).cuda()
-        #self.fc4 = nn.Linear(embed_dim,embed_dim).cuda()
         self._N=_N
     
     def forward(self,edges_list):
         node1=edges_list[:,0]
         node2=edges_list[:,1]
         x=self.enc(node1).to(self.device)
-        x=torch.t(x)
         y=self.enc(node2).to(self.device)
-        y=torch.t(y)
         
         out = x*y
         out = self.fc1(out)
@@ -656,6 +652,7 @@ class SupervisedGraphSage(nn.Module):
             optimizer.zero_grad()
             loss = self.loss(batch_edges,Variable(torch.FloatTensor(batch_labels)).to(self.device))
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.parameters(), 0.005)
             optimizer.step()
             end_time = time.time()
             if epoch % 10==0:
@@ -761,7 +758,8 @@ class GraphSAGE:
         val_label = np.concatenate([np.ones(len(datasets['validation_set'])), np.zeros(len(datasets_false['validation_set']))])
         
         # train graphsage model
-        optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate,weight_decay=1e-5)
+        # optimizer = torch.optim.Adam(self.graphsage.parameters(), lr=learning_rate, weight_decay=0)
+        optimizer = torch.optim.AdamW(self.graphsage.parameters(), lr=learning_rate)
         train_metrics = self.graphsage.train(train_dataset,labels_dataset,training_epoch,optimizer, x_val=val_dataset, y_val=val_label)
         train_metrics['label'] = 'train'
         train_stats.append(train_metrics)
