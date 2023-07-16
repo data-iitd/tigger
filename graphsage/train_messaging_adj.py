@@ -80,9 +80,9 @@ init_dict1 = {
 }
 
 train_dict = {
-    'training_epoch': 80000,  #20000  # epoch for training
-    'boost_epoch': 4000, #4000 # epoch per boosting run
-    'boost_times': 0, #100 # number of boosting runs
+    'training_epoch': 8000,  #20000  # epoch for training
+    'boost_epoch': 8000, #4000 # epoch per boosting run
+    'boost_times': 2, #100 # number of boosting runs
     'add_edges': 10, 
     'learning_rate': 0.0001,
     'save_number': 0,
