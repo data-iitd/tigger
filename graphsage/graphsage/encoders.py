@@ -47,5 +47,5 @@ class Encoder(nn.Module):
         combined = self.fc1(combined)
         combined = F.leaky_relu(combined, negative_slope=0.03)
         combined = self.fc2(combined)
-        combined = F.tanh(combined) ### used for msg network
+        combined = torch.tanh(combined) ### used for msg network
         return combined

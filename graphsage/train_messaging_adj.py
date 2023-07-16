@@ -66,43 +66,46 @@ def train_and_calculate_graphsage_embedding(init_dict, train_dict):
     
     return train_metrics
     
+    
+def print_metrics(train_metrics):
+  epoch_cnt = 0
+  for metrics in train_metrics:
+      epoch =  [x+epoch_cnt for x in metrics['epoch']]
+      plt.plot(epoch, metrics['train_loss'], label=metrics['label'] )
+
+      if 'val_loss' in metrics.keys():
+          epoch =  [x+epoch_cnt for x in metrics['val_epoch']]
+          plt.plot(epoch, metrics['val_loss'], label=metrics['label']+"_val" )
+          
+      epoch_cnt = epoch_cnt + max(metrics['epoch'])/ (len(metrics['epoch']) - 1 ) * len (metrics['epoch'])
+
+  plt.legend(bbox_to_anchor=(1.10, 1))
+  plt.show()
 
 # %%
 # calculate embedding
-output_path = 'models/ucsocial'
-data = pd.read_csv("../data/opsahl-ucsocial/data.csv")
-data = data.drop_duplicates(subset=['start','end'])
-features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
+if __name__ == "__main__":
+    output_path = 'models/ucsocial'
+    data = pd.read_csv("../data/opsahl-ucsocial/data.csv")
+    data = data.drop_duplicates(subset=['start','end'])
+    features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
 
-init_dict1 = {
-    'embedding_dim': 128,
-    'verbose_level': 2
-}
+    init_dict1 = {
+        'embedding_dim': 128,
+        'verbose_level': 2
+    }
 
-train_dict = {
-    'training_epoch': 8000,  #20000  # epoch for training
-    'boost_epoch': 8000, #4000 # epoch per boosting run
-    'boost_times': 2, #100 # number of boosting runs
-    'add_edges': 10, 
-    'learning_rate': 0.0001,
-    'save_number': 0,
-    'dirs': output_path
-}
+    train_dict = {
+        'training_epoch': 800,  #20000  # epoch for training
+        'boost_epoch': 80, #4000 # epoch per boosting run
+        'boost_times': 1, #100 # number of boosting runs
+        'add_edges': 10, 
+        'learning_rate': 0.0001,
+        'save_number': 0,
+        'dirs': output_path
+    }
 
-init_dict2, info_dict = prep_input_data(data, features)
-train_metrics = train_and_calculate_graphsage_embedding({**init_dict1, **init_dict2}, train_dict)
-# %%
-epoch_cnt = 0
-for metrics in train_metrics:
-    epoch =  [x+epoch_cnt for x in metrics['epoch']]
-    plt.plot(epoch, metrics['train_loss'], label=metrics['label'] )
-
-    if 'val_loss' in metrics.keys():
-        epoch =  [x+epoch_cnt for x in metrics['val_epoch']]
-        plt.plot(epoch, metrics['val_loss'], label=metrics['label']+"_val" )
-        
-    epoch_cnt = epoch_cnt + max(metrics['epoch'])/ (len(metrics['epoch']) - 1 ) * len (metrics['epoch'])
-
-plt.legend(bbox_to_anchor=(1.10, 1))
-plt.show()
-# %%
+    init_dict2, info_dict = prep_input_data(data, features)
+    train_metrics = train_and_calculate_graphsage_embedding({**init_dict1, **init_dict2}, train_dict)
+    print_metrics(train_metrics)
+    # %%
