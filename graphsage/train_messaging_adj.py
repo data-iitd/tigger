@@ -93,8 +93,8 @@ if __name__ == "__main__":
     data = data.drop_duplicates(subset=['start','end'])
     features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
     
-    features = pd.read_parquet("../data_large/10mln_node_features.parquet")
-    data = pd.read_parquet("../data_large/10mln_edge.parquet")
+    # features = pd.read_parquet("../data_large/10mln_node_features.parquet")
+    # data = pd.read_parquet("../data_large/10mln_edge.parquet")
 
     init_dict1 = {
         'embedding_dim': 128,

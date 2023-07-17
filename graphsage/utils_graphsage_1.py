@@ -645,11 +645,14 @@ class SupervisedGraphSage(nn.Module):
         val_loss = []
         epoch_id = []
         val_epoch = []
+        step = 0
+        max_step = math.floor(y_val.shape[0] / batch_size)
         for epoch in range(epochs):
-            batch=random.sample(range(len(train)),batch_size)
+            # batch=random.sample(range(len(train)),batch_size)  #n time complexitiy!
             start_time = time.time()
-            batch_edges = train[batch]
-            batch_labels=labels[batch]
+            batch_edges = train[step*batch_size: (step+1)*batch_size]
+            batch_labels = labels[step*batch_size: (step+1)*batch_size]
+            step = step + 1 if step < (max_step-1) else 0  
             optimizer.zero_grad()
             loss = self.loss(batch_edges,Variable(torch.FloatTensor(batch_labels)).to(self.device))
             loss.backward()
