@@ -627,7 +627,7 @@ class SupervisedGraphSage(nn.Module):
     
     def validation_step(self, x_val, y_val, batch_size=1024):
         batches = int(math.floor(y_val.shape[0]/batch_size))
-        batch = 2
+        batches = 2
         val_loss = []
         for i in range(batches):
             x_batch = x_val[range(i*batch_size, (i+1)*batch_size)]
@@ -659,7 +659,7 @@ class SupervisedGraphSage(nn.Module):
             torch.nn.utils.clip_grad_norm_(self.parameters(), 0.005)
             optimizer.step()
             end_time = time.time()
-            if epoch % 50==0:
+            if epoch % 20==0:
                 print('\rEpoch:%d,Loss:%f,estimated time:%.2f'%(epoch, loss.item(),(end_time-start_time)*(epochs-epoch)),end="")
                 train_loss.append(loss.item())
                 epoch_id.append(epoch)

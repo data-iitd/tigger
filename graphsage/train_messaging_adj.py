@@ -65,7 +65,8 @@ def train_and_calculate_graphsage_embedding(init_dict, train_dict):
     train_metrics = graphsagemodel.graphsage_train(**train_dict)
     end = time.process_time_ns()
     print(f"duration {(end-start)/1e9} sec")
-    graphsagemodel.save_embedding(train_dict['dirs']+'/embedding_matrix_final')
+    graphsagemodel.save_model(train_dict['dirs']+'/model_final')
+    # graphsagemodel.save_embedding(train_dict['dirs']+'/embedding_matrix_final')
     
     return train_metrics
     
@@ -93,8 +94,8 @@ if __name__ == "__main__":
     data = data.drop_duplicates(subset=['start','end'])
     features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
     
-    # features = pd.read_parquet("../data_large/10mln_node_features.parquet")
-    # data = pd.read_parquet("../data_large/10mln_edge.parquet")
+    # features = pd.read_parquet("../data_large/5mln_node_features.parquet")
+    # data = pd.read_parquet("../data_large/5mln_edge.parquet")
 
     init_dict1 = {
         'embedding_dim': 128,
@@ -102,9 +103,9 @@ if __name__ == "__main__":
     }
 
     train_dict = {
-        'training_epoch': 800,  #20000  # epoch for training
+        'training_epoch': 52,  #20000  # epoch for training
         'boost_epoch': 400, #4000 # epoch per boosting run
-        'boost_times': 2, #100 # number of boosting runs
+        'boost_times': 0, #100 # number of boosting runs
         'add_edges': 10, 
         'learning_rate': 0.0001,
         'save_number': 0,
