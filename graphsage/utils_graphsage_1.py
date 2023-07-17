@@ -714,9 +714,9 @@ class GraphSAGE:
     def save_embedding(self, embedding_path='embeddings'):
         np.save(embedding_path,self.get_embeddings())
         
-    def load_model(self,path='graph_graphsage.pth',embedding_path='embeddings.npy'):
+    def load_model(self,path='graph_graphsage.pth'):
         self.graphsage.load_state_dict(torch.load(path), strict=False)
-        self.embedding_matrix_numpy = np.load(embedding_path).reshape((self._N,self.embedding_dim))
+        # self.embedding_matrix_numpy = np.load(embedding_path).reshape((self._N,self.embedding_dim))
         
         
     def graphsage_link_prediction_from_embedding_one_to_other(self,i,embedding):
