@@ -660,7 +660,8 @@ class SupervisedGraphSage(nn.Module):
             optimizer.step()
             end_time = time.time()
             if epoch % 20==0:
-                print('\rEpoch:%d,Loss:%f,estimated time:%.2f'%(epoch, loss.item(),(end_time-start_time)*(epochs-epoch)),end="")
+                # print('\rEpoch:%d,Loss:%f,estimated time:%.2f'%(epoch, loss.item(),(end_time-start_time)*(epochs-epoch)),end="")
+                print(f'\rEpoch: {epoch}, loss: {loss.item()}, elapsed time {end_time-start_time:.2f}, remaining time: {(end_time-start_time)*(epochs-epoch):.1f}', end="")
                 train_loss.append(loss.item())
                 epoch_id.append(epoch)
             if epoch%100==0 and x_val is not None and y_val is not None:

@@ -31,7 +31,7 @@ def get_id(node, node_to_id):
         else:
             return node_to_id[node]
 
-def prep_input_data(data, features):
+def prep_input_data(data, features, max_degree=10000):
     """trains graphsage and stores trained model with embedding in the output path"""
     node_to_id = dict()  # dictionary with node ids
     
@@ -41,8 +41,9 @@ def prep_input_data(data, features):
     for start, end in tqdm(data[['start','end']].values):
         start_id = get_id(start, node_to_id)
         end_id = get_id(end, node_to_id)
-        neighbors_dict[start_id].add(end_id)
-        neighbors_dict[end_id].add(start_id)
+        if len(neighbors_dict[start_id])<max_degree and len(neighbors_dict[end_id])<max_degree:
+            neighbors_dict[start_id].add(end_id)
+            neighbors_dict[end_id].add(start_id)
 
     # prep feature matrix
     node_mapping_df = pd.DataFrame.from_dict(node_to_id, orient='index', columns=['new_id'])
@@ -94,8 +95,8 @@ if __name__ == "__main__":
     data = data.drop_duplicates(subset=['start','end'])
     features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
     
-    # features = pd.read_parquet("../data_large/5mln_node_features.parquet")
-    # data = pd.read_parquet("../data_large/5mln_edge.parquet")
+    features = pd.read_parquet("../data_large/5mln_node_features.parquet")
+    data = pd.read_parquet("../data_large/5mln_edge.parquet")
 
     init_dict1 = {
         'embedding_dim': 128,
@@ -103,7 +104,7 @@ if __name__ == "__main__":
     }
 
     train_dict = {
-        'training_epoch': 52,  #20000  # epoch for training
+        'training_epoch': 400,  #20000  # epoch for training
         'boost_epoch': 400, #4000 # epoch per boosting run
         'boost_times': 0, #100 # number of boosting runs
         'add_edges': 10, 
