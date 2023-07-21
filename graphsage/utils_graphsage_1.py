@@ -290,8 +290,6 @@ def evaluate_overlap_torch(_N,_num_of_edges,adj_origin,embedding_matrix_numpy,li
     return predict_adj
 
 
-
-
 def symmetric(directed_adjacency, clip_to_one=True):
     """
     Symmetrize the input adjacency matrix.
@@ -739,9 +737,10 @@ class GraphSAGE:
 
     def get_embeddings(self):
         embedding_matrix_numpy = None
-        for i in range(math.floor(self._N / 1024)):
+        for i in range(math.ceil(self._N / 1024)):
             # get embedding for range
-            embedding_matrix_torch=torch.t(self.graphsage.enc(range(i*1024, (i+1)*1024)))
+            ubound = min((i+1)*1024, self._N)
+            embedding_matrix_torch = self.graphsage.enc(range(i*1024, ubound))
             if embedding_matrix_numpy is None:
                 embedding_matrix_numpy = embedding_matrix_torch.detach().to('cpu').numpy()
             else:

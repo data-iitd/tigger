@@ -67,7 +67,7 @@ def train_and_calculate_graphsage_embedding(init_dict, train_dict):
     end = time.process_time_ns()
     print(f"duration {(end-start)/1e9} sec")
     graphsagemodel.save_model(train_dict['dirs']+'/model_final')
-    # graphsagemodel.save_embedding(train_dict['dirs']+'/embedding_matrix_final')
+    graphsagemodel.save_embedding(train_dict['dirs']+'/embedding_matrix_final')
     
     return train_metrics
     
@@ -95,8 +95,8 @@ if __name__ == "__main__":
     data = data.drop_duplicates(subset=['start','end'])
     features = pd.read_parquet("../data/opsahl-ucsocial/node_features.parquet")
     
-    features = pd.read_parquet("../data_large/5mln_node_features.parquet")
-    data = pd.read_parquet("../data_large/5mln_edge.parquet")
+    # features = pd.read_parquet("../data_large/5mln_node_features.parquet")
+    # data = pd.read_parquet("../data_large/5mln_edge.parquet")
 
     init_dict1 = {
         'embedding_dim': 128,
