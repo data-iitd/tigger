@@ -710,6 +710,7 @@ class GraphSAGE:
         torch.save(self.graphsage.state_dict(), path)
         
     def save_embedding(self, embedding_path='embeddings'):
+        print(f"calculating and saving embeddings to {embedding_path}")
         np.save(embedding_path,self.get_embeddings())
         
     def load_model(self,path='graph_graphsage.pth'):
