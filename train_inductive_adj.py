@@ -8,36 +8,23 @@ from collections import defaultdict,Counter
 import matplotlib.pyplot as plt
 import numpy as np
 import random
-import pickle
-import argparse
 import numpy as np
-import pickle
-import time
 import copy
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from tqdm import tqdm
-from sklearn.model_selection import train_test_split
-import csv
-from torch.autograd import Variable
-from torch.nn import functional as F
 from tgg_utils import *
-import argparse
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_samples, silhouette_score
-from sklearn.mixture import GaussianMixture
 from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 from sklearn.neighbors import KDTree
 # import scann
 print("loaded")
-from model_classes.inductive_model import EdgeNodeLSTM, get_topk_event_prediction_rate
+from model_classes.inductive_model import get_topk_event_prediction_rate
+from model_classes.edge_node_lstm import EdgeNodeLSTM
 
 #%%
-
+feature_path = "data/bitcoin/feature_attributes.parquet"
 data_path = "data/bitcoin/edgelist_with_attributes.parquet"
 gpu_num = -1
 config_path = "temp/"
