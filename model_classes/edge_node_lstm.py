@@ -6,19 +6,19 @@ import torch.nn as nn
 
 
 class EdgeNodeLSTM(nn.Module):
-    def __init__(self, vocab, node_pretrained_embedding, nb_layers, num_components, edge_emb_dim, nb_lstm_units=100, clust_dim=3, 
-                 batch_size=3,device='cpu'):
+    def __init__(self, vocab, node_pretrained_embedding, nb_layers, num_components, edge_attr_dim, 
+                 node_attr_dim, nb_lstm_units=100, clust_dim=3, batch_size=3,device='cpu'):
         super(EdgeNodeLSTM, self).__init__()
         self.vocab = vocab
         self.nb_lstm_layers = nb_layers  # number of LSTM layers
         self.nb_lstm_units = nb_lstm_units  # dimension of hidden layer h
         self.clust_dim = clust_dim  # dimension of the cluster embedding
         self.batch_size = batch_size
-        self.edge_emb_dim = edge_emb_dim  # number of edge features
+        self.edge_attr_dim = edge_attr_dim  # number of edge attributes
+        self.node_attr_dim = node_attr_dim  # nomber of node attributes
         # don't count the padding tag for the classifier output
         self.nb_events = len(self.vocab) - 1
         self.gnn_dim = node_pretrained_embedding.shape[1]
-        self.edge_emb_dim = edge_emb_dim
         self.mu_hidden_dim = 100  # dimension between cluster embedding and z_gnn
         self.num_components = num_components  # number of clusters
         print("Number of components,", num_components)
@@ -43,7 +43,7 @@ class EdgeNodeLSTM(nn.Module):
         
         # design LSTM
         self.lstm = nn.LSTM(
-            input_size=self.clust_dim + self.gnn_dim + self.edge_emb_dim,   ## cluster + GNN + edge embedding
+            input_size=self.clust_dim + self.gnn_dim + self.edge_attr_dim + self.node_attr_dim,   ## cluster + GNN + edge embedding
             hidden_size=self.nb_lstm_units,
             num_layers=self.nb_lstm_layers,
             batch_first=True,
@@ -60,12 +60,12 @@ class EdgeNodeLSTM(nn.Module):
         self.gnn_decoder3 = nn.Linear(self.gnn_dim, self.gnn_dim)  # layer 3 gnn_decoder
         
         self.edge_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
-        self.edge_decoder2 = nn.Linear(128,self.edge_emb_dim)  # layer 2 gnn_decoder
-        self.edge_decoder3 = nn.Linear(self.edge_emb_dim, self.edge_emb_dim)  # layer 3 gnn_decoder
+        self.edge_decoder2 = nn.Linear(128,self.edge_attr_dim)  # layer 2 gnn_decoder
+        self.edge_decoder3 = nn.Linear(self.edge_attr_dim, self.edge_attr_dim)  # layer 3 gnn_decoder
         
         self.feat_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
-        self.feat_decoder2 = nn.Linear(128,self.edge_emb_dim)  # layer 2 gnn_decoder
-        self.feat_decoder3 = nn.Linear(self.edge_emb_dim, self.edge_emb_dim)  # layer 3 gnn_decoder
+        self.feat_decoder2 = nn.Linear(128,self.node_attr_dim)  # layer 2 gnn_decoder
+        self.feat_decoder3 = nn.Linear(self.node_attr_dim, self.node_attr_dim)  # layer 3 gnn_decoder
                 
         self.mse_los_gnn = nn.MSELoss(reduction='none')
         self.mse_loss_edge = nn.MSELoss(reduction='none')
@@ -115,21 +115,25 @@ class EdgeNodeLSTM(nn.Module):
         hidden_b = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
         return (hidden_a, hidden_b)
 
-    def forward(self, X, Y, Xedge, Yedge, Xfeat, Yfeat, X_lengths, mask, kl_weight, XCID, YCID):
+    def forward(self, seq_Xvocab_id, seq_Yvocab_id, 
+                seq_Xedge_attr, seq_Yedge_attr, 
+                seq_Xnode_attr, seq_Ynode_attr, 
+                x_length, mask, 
+                kl_weight, seq_Xcluster_id, seq_Ycluster_id):
         # reset the LSTM hidden state. Must be done before you run a new batch. Otherwise the LSTM will treat
         # a new batch as a continuation of a sequence
         self.hidden = self.init_hidden()
-        batch_size, seq_len = X.size()
+        batch_size, seq_len = seq_Xvocab_id.size()
         
         # ---------------------
         # 1. embed the input
         # --------------------
         # Dim transformation: (batch_size, seq_len, 1) -> (batch_size, seq_len, embedding_dim)
 
-        X = self.gnn_embedding(X)  # retrieve the gnn embedding from node vocab id
+        X = self.gnn_embedding(seq_Xvocab_id)  # retrieve the gnn embedding from node vocab id
         X = self.embedding_hidden(X)  #TODO WHY?
-        XCID_embedding = self.cluster_embeddings(XCID)  # retrieve embedding for cluster id
-        X = torch.cat((Xedge, Xfeat, X, XCID_embedding), -1)
+        XCID_embedding = self.cluster_embeddings(seq_Xcluster_id)  # retrieve embedding for cluster id
+        X = torch.cat((seq_Xedge_attr, seq_Xnode_attr, X, XCID_embedding), -1)
         
         
         # ---------------------
@@ -138,7 +142,7 @@ class EdgeNodeLSTM(nn.Module):
         # Dim transformation: (batch_size, seq_len, embedding_dim) -> (batch_size, seq_len, nb_lstm_units)
 
         # pack_padded_sequence so that padded items in the sequence won't be shown to the LSTM
-        X = torch.nn.utils.rnn.pack_padded_sequence(X, X_lengths, batch_first=True,enforce_sorted=False)
+        X = torch.nn.utils.rnn.pack_padded_sequence(X, x_length, batch_first=True,enforce_sorted=False)
         X, self.hidden = self.lstm(X, self.hidden)  # now run through LSTM
         X, _ = torch.nn.utils.rnn.pad_packed_sequence(X, batch_first=True)  # unpacking operation
         X = X.contiguous()
@@ -159,7 +163,7 @@ class EdgeNodeLSTM(nn.Module):
         
         #YCID is expected to have size of batch_size*seq_len
         if self.training:  # select true cluster during training?
-            Y_clusterid_sampled = YCID.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
+            Y_clusterid_sampled = seq_Xcluster_id.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
         else:  # select argmax cluster  during inference?
             Y_clusterid_sampled = torch.argmax(Y_clusterid,dim=2)
             Y_clusterid_sampled = Y_clusterid_sampled.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
@@ -186,7 +190,7 @@ class EdgeNodeLSTM(nn.Module):
         feat_hat = self.feat_decoder3(feat_hat)  #3de layer decoder
         
         # prep y_true
-        Y = self.gnn_embedding(Y)
+        Y = self.gnn_embedding(seq_Yvocab_id)
         Y_temp = Y  #### Will be used to calculate the elbo loss
         Y = Y.view(-1,Y.shape[2])
         
@@ -194,9 +198,9 @@ class EdgeNodeLSTM(nn.Module):
         kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
         recon_loss_ne = self.mse_los_gnn(ne_hat,Y_temp)
         recon_loss_ne = recon_loss_ne.sum(-1)*mask
-        recon_loss_edge = self.mse_loss_edge(edge_hat,Yedge)
+        recon_loss_edge = self.mse_loss_edge(edge_hat, seq_Yedge_attr)
         recon_loss_edge = recon_loss_edge.sum(-1)*mask
-        recon_loss_feat = self.mse_loss_feat(feat_hat,Yfeat)
+        recon_loss_feat = self.mse_loss_feat(feat_hat, seq_Ynode_attr)
         recon_loss_feat = recon_loss_feat.sum(-1)*mask
         elbo = kl_weight*kl + recon_loss_ne + recon_loss_edge + recon_loss_feat  ### recon_loss 
         num_events = mask.sum()
@@ -204,12 +208,12 @@ class EdgeNodeLSTM(nn.Module):
         
         #cluster loss
         Y_clusterid = Y_clusterid.view(-1, Y_clusterid.shape[-1])
-        loss_cluster = self.celoss_cluster(Y_clusterid,YCID.view(-1))
+        loss_cluster = self.celoss_cluster(Y_clusterid, seq_Xcluster_id.view(-1))
         
         loss = elbo + loss_cluster
         
         log_dict = {
-            'loss': loss,
+            'loss': loss.item(),
             'elbo_loss': elbo.item(),
             'kl_loss': (kl.sum()/num_events).item(),
             'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),

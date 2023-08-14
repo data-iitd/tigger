@@ -166,17 +166,19 @@ class InductiveController:
         """
         edge_shape = edge.attributes.shape
         feat_dim = self.node_features.shape[1]
-        random_walk = [(edge.attributes, edge.end, self.cluster_labels[edge.end])]
+        vocab_id = self.vocab[edge.end]
+        random_walk = [(list(edge.attributes), vocab_id, self.cluster_labels[edge.end],
+                         self.node_features.iloc[vocab_id].values.tolist())]
         done = False
         ct = 0
         while ct < self.l_w and not done: 
             if len(edge.outgoing_edges) == 0:
                 done = True
-                random_walk.append((np.zeros(edge_shape), 1, 1, np.zeros(feat_dim)))  # end vocab id and cluster
+                random_walk.append((list(np.zeros(edge_shape)), 1, 1, list(np.zeros(feat_dim))))  # end vocab id and cluster
             else:
                 edge = np.random.choice(edge.outgoing_edges, 1, edge.out_nbr_sample_probs)[0]
                 vocab_id = self.vocab[edge.end]
-                random_walk.append((edge.attributes, vocab_id, self.cluster_labels[vocab_id], 
+                random_walk.append((list(edge.attributes), vocab_id, self.cluster_labels[vocab_id], 
                                     self.node_features.iloc[vocab_id].values.tolist()))
                 ct += 1
         return random_walk if len(random_walk) >= self.minimum_walk_length else None
@@ -212,12 +214,12 @@ class InductiveController:
         feat_df = pd.read_parquet(parquet_filename)  #has id column with node number
         vocab_df = (
             pd.DataFrame
-            .from_dict(self.vocab, orient='index', columns=['vocab_id'])
+            .from_dict(self.vocab, orient='index', columns=['vocab_id'], dtype='int64')
             .reset_index(names='id')
-            .join(feat_df, on='id', how='outer')
+            .merge(feat_df, on='id', how='outer')
             .fillna(0) 
             .set_index('vocab_id')   
-            .drop('id')        
+            .drop('id', axis=1)        
         )
         
         #check if all rows of the feature are mapped to the vocab
@@ -295,9 +297,9 @@ class InductiveController:
             
         for seq in sequences:
             for i, e in elements.items():
-                res_dict['seq_X'+e].append([list(item[i]) for item in seq[:-1]])
-                res_dict['seq_Y'+e].append([list(item[i]) for item in seq[1:]])
-                res_dict['x_length'].append(len(seq)-1)
+                res_dict['seq_X'+e].append([item[i] for item in seq[:-1]])
+                res_dict['seq_Y'+e].append([item[i] for item in seq[1:]])
+            res_dict['x_length'].append(len(seq)-1)
            
         return res_dict
 
@@ -305,50 +307,66 @@ class InductiveController:
         """Creates padded batch copied to the torch device
         seqs is a dict containing :seq_Xedge, seq_Yedge, seq_X, seq_Y, 
         X_lengths, Y_lengths, seq_XCID, seq_YCID, max_len"""
-        edge_attr_dim = len(seqs['seq_Xedge'][0][0])  # dimension of the edge attributes
+        # edge_attr_dim = len(seqs['seq_Xedge'][0][0])  # dimension of the edge attributes
         
         batch_seq = {}
+        pad_batch_seq = {}
+        pad_value = self.vocab['<PAD>']
         for k,seq in seqs.items():
-            batch_seq[k] = v[start_index:start_index+batch_size]
-            k = [v[i] for i in indices] 
+            if k == 'x_length':
+                x_length = seqs['x_length'][start_index:start_index+batch_size]
+            else:
+                batch_seq[k] = seq[start_index:start_index+batch_size]
+                if type(seq[0][0])==list:
+                    dim = len(seq[0][0])
+                    padding_shape = (batch_size, self.l_w, dim)
+                else:
+                    padding_shape = (batch_size, self.l_w)
+                pad_batch_seq[k] = np.ones(padding_shape, dtype=np.int32) * pad_value
+               
         
+        for i, x_len in enumerate(x_length):
+            for k, pad_seq in pad_batch_seq.items():
+                pad_seq[i, 0:x_len] = batch_seq[k][i]
+                
+        pad_batch_seq['x_length'] = x_length
         
-        batch_X = seqs['seq_X'][start_index:start_index+batch_size]
-        batch_Y = seqs['seq_Y'][start_index:start_index+batch_size]
-        batch_Xedge = seqs['seq_Xedge'][start_index:start_index+batch_size]
-        batch_Yedge = seqs['seq_Yedge'][start_index:start_index+batch_size]    
-        batch_X_len = seqs['X_lengths'][start_index:start_index+batch_size]
-        batch_XCID = seqs['seq_XCID'][start_index:start_index+batch_size]
-        batch_YCID = seqs['seq_YCID'][start_index:start_index+batch_size] 
+        for k, pad_seq in pad_batch_seq.items():
+            if k[5:] in ['vocab_id', 'cluster_id'] or k == 'x_length':
+                pad_batch_seq[k] = torch.LongTensor(pad_seq).to(self.device)
+            else:
+                pad_batch_seq[k] = torch.FloatTensor(pad_seq).to(self.device)
         
-        pad_batch_X = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
-        pad_batch_Y = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
-        pad_batch_Xedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
-        pad_batch_Yedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
-        pad_batch_XCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
-        pad_batch_YCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
+        return pad_batch_seq
         
-        for i, x_len in enumerate(batch_X_len):
-            #print(i,x_len,len(batch_X[i][:x_len]),len(pad_batch_X[i, 0:x_len]))
-            pad_batch_X[i, 0:x_len] = batch_X[i][:x_len]
-            pad_batch_Y[i, 0:x_len] = batch_Y[i][:x_len]
-            pad_batch_Xedge[i, 0:x_len] = batch_Xedge[i][:x_len]
-            pad_batch_Yedge[i, 0:x_len] = batch_Yedge[i][:x_len]
-            pad_batch_XCID[i, 0:x_len] = batch_XCID[i][:x_len]
-            pad_batch_YCID[i, 0:x_len] = batch_YCID[i][:x_len]
+        # pad_batch_X = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
+        # pad_batch_Y = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
+        # pad_batch_Xedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
+        # pad_batch_Yedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
+        # pad_batch_XCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
+        # pad_batch_YCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
+        
+        # for i, x_len in enumerate(batch_X_len):
+        #     #print(i,x_len,len(batch_X[i][:x_len]),len(pad_batch_X[i, 0:x_len]))
+        #     pad_batch_X[i, 0:x_len] = batch_X[i][:x_len]
+        #     pad_batch_Y[i, 0:x_len] = batch_Y[i][:x_len]
+        #     pad_batch_Xedge[i, 0:x_len] = batch_Xedge[i][:x_len]
+        #     pad_batch_Yedge[i, 0:x_len] = batch_Yedge[i][:x_len]
+        #     pad_batch_XCID[i, 0:x_len] = batch_XCID[i][:x_len]
+        #     pad_batch_YCID[i, 0:x_len] = batch_YCID[i][:x_len]
             
-        pad_batch_X =  torch.LongTensor(pad_batch_X).to(self.device)
-        pad_batch_Y =  torch.LongTensor(pad_batch_Y).to(self.device)
-        pad_batch_Xedge =  torch.Tensor(pad_batch_Xedge).to(self.device)
-        pad_batch_Yedge =  torch.Tensor(pad_batch_Yedge).to(self.device)
-        batch_X_len = torch.LongTensor(batch_X_len).to(self.device)
-        pad_batch_XCID =  torch.LongTensor(pad_batch_XCID).to(self.device)
-        pad_batch_YCID =  torch.LongTensor(pad_batch_YCID).to(self.device)
+        # pad_batch_X =  torch.LongTensor(pad_batch_X).to(self.device)
+        # pad_batch_Y =  torch.LongTensor(pad_batch_Y).to(self.device)
+        # pad_batch_Xedge =  torch.Tensor(pad_batch_Xedge).to(self.device)
+        # pad_batch_Yedge =  torch.Tensor(pad_batch_Yedge).to(self.device)
+        # batch_X_len = torch.LongTensor(batch_X_len).to(self.device)
+        # pad_batch_XCID =  torch.LongTensor(pad_batch_XCID).to(self.device)
+        # pad_batch_YCID =  torch.LongTensor(pad_batch_YCID).to(self.device)
         
-        return {'Xedge': pad_batch_Xedge, 'Yedge': pad_batch_Yedge,
-                'X': pad_batch_X, 'Y': pad_batch_Y,
-                'X_lengths': batch_X_len,
-                'XCID': pad_batch_XCID, 'YCID': pad_batch_YCID}
+        # return {'Xedge': pad_batch_Xedge, 'Yedge': pad_batch_Yedge,
+        #         'X': pad_batch_X, 'Y': pad_batch_Y,
+        #         'X_lengths': batch_X_len,
+        #         'XCID': pad_batch_XCID, 'YCID': pad_batch_YCID}
         
     def data_shuffle(self, seqs):
         #seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID
@@ -361,17 +379,19 @@ class InductiveController:
     
     def initialize_model(self):
         edge_dim = self.edges[0].attributes.shape[0]  # edge dimension
+        node_attr_dim = self.node_features.shape[1]
         elstm = EdgeNodeLSTM(
             vocab=self.vocab, 
-            node_pretrained_embedding = self.normalized_dataset,
+            node_pretrained_embedding=self.normalized_dataset,
             nb_layers=2, 
             nb_lstm_units=128,
-            edge_emb_dim= edge_dim,
+            edge_attr_dim=edge_dim,
+            node_attr_dim=node_attr_dim,
             clust_dim=64, # used for cluster embedding
-            batch_size= self.batch_size,
+            batch_size=self.batch_size,
             device=self.device,
             num_components=self.num_clusters + 2  #incl padding + end cluster
-        )  #
+        )
         elstm = elstm.to(self.device)
         
         optimizer = optim.Adam(elstm.parameters(), lr=.001)
@@ -383,10 +403,10 @@ class InductiveController:
     
     def train_model(self):
         epoch_wise_loss = []
-        for epoch in range(self.num_epochs):
-            self.model.train()
-          
-            loss_dict = {
+        seqs = self.sample_random_Walks()
+        seqs = self.get_X_Y_from_sequences(seqs)
+        
+        loss_dict = {
                 'loss': [],
                 'elbo_loss': [],
                 'reconstruction_ne': [],
@@ -395,22 +415,22 @@ class InductiveController:
                 'kl_loss': [],
                 'cross_entropy_cluster': []
             }
-            
-            seqs = self.sample_random_Walks()
-            seqs = self.get_X_Y_from_sequences(seqs)
+           
+        for epoch in range(self.num_epochs):
+            self.model.train()
             seqs = self.data_shuffle(seqs)
-       
-            n_seqs = len(seqs['seq_X'])
-            for start_index in range(0,1): #range(0, n_seqs-batch_size, batch_size):              
+            n_seqs = len(seqs['x_length'])
+            
+            for start_index in range(0,20): #range(0, n_seqs-batch_size, batch_size):              
                 print("\r%d/%d" %(int(start_index),n_seqs),end="")
                 wt_update_ct = 0
                 pad_seqs = self.get_batch(start_index, self.batch_size, seqs)
                 self.model.zero_grad()
-                mask_distribution = (pad_seqs['Y']!=0)
+                mask_distribution = (pad_seqs['seq_Yvocab_id']!=0)
                 mask_distribution = mask_distribution.to(self.device)
                 
                 # forward + backward pas
-                _, _, loss, log_dict, _ = self.model(
+                _, _, loss, log_dict, _, _ = self.model(
                     **pad_seqs, mask=mask_distribution, kl_weight=self.kl_weight
                 )
                 loss.backward()
@@ -429,7 +449,7 @@ class InductiveController:
             epoch_wise_loss.append(running_loss)
             
             if self.verbose>=1:
-                print(f"\r Epoch {epoch} done")
+                print(f"\r\rEpoch {epoch} done \r")
                 for k,v in loss_dict.items():
                         print(f"{k} = {np.mean(v[-wt_update_ct:])}")
             
@@ -460,12 +480,13 @@ if __name__ == "__main__":
         node_feature_path=node_feature_path,
         edge_list_path=edge_list_path,
         graphsage_embeddings_path=graphsage_embeddings_path,
-        n_walks=n_walks
+        n_walks=n_walks,
+        batch_size = 24
     )
     seqs = inductiveController.sample_random_Walks()
     seqs = inductiveController.get_X_Y_from_sequences(seqs)
     seqs = inductiveController.data_shuffle(seqs)
-    seqs = inductiveController.get_batch(0, 1024, seqs)
+    seqs = inductiveController.get_batch(0, 24, seqs)
     
     epoch_wise_loss, loss_dict = inductiveController.train_model()
     
