@@ -339,35 +339,6 @@ class InductiveController:
         
         return pad_batch_seq
         
-        # pad_batch_X = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
-        # pad_batch_Y = np.ones((batch_size, self.l_w),dtype=np.int64) * self.vocab['<PAD>']
-        # pad_batch_Xedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
-        # pad_batch_Yedge = np.ones((batch_size, self.l_w, edge_attr_dim),dtype=np.float32) * self.vocab['<PAD>']
-        # pad_batch_XCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
-        # pad_batch_YCID = np.ones((batch_size, self.l_w),dtype=np.int64) * self.cluster_labels[0]
-        
-        # for i, x_len in enumerate(batch_X_len):
-        #     #print(i,x_len,len(batch_X[i][:x_len]),len(pad_batch_X[i, 0:x_len]))
-        #     pad_batch_X[i, 0:x_len] = batch_X[i][:x_len]
-        #     pad_batch_Y[i, 0:x_len] = batch_Y[i][:x_len]
-        #     pad_batch_Xedge[i, 0:x_len] = batch_Xedge[i][:x_len]
-        #     pad_batch_Yedge[i, 0:x_len] = batch_Yedge[i][:x_len]
-        #     pad_batch_XCID[i, 0:x_len] = batch_XCID[i][:x_len]
-        #     pad_batch_YCID[i, 0:x_len] = batch_YCID[i][:x_len]
-            
-        # pad_batch_X =  torch.LongTensor(pad_batch_X).to(self.device)
-        # pad_batch_Y =  torch.LongTensor(pad_batch_Y).to(self.device)
-        # pad_batch_Xedge =  torch.Tensor(pad_batch_Xedge).to(self.device)
-        # pad_batch_Yedge =  torch.Tensor(pad_batch_Yedge).to(self.device)
-        # batch_X_len = torch.LongTensor(batch_X_len).to(self.device)
-        # pad_batch_XCID =  torch.LongTensor(pad_batch_XCID).to(self.device)
-        # pad_batch_YCID =  torch.LongTensor(pad_batch_YCID).to(self.device)
-        
-        # return {'Xedge': pad_batch_Xedge, 'Yedge': pad_batch_Yedge,
-        #         'X': pad_batch_X, 'Y': pad_batch_Y,
-        #         'X_lengths': batch_X_len,
-        #         'XCID': pad_batch_XCID, 'YCID': pad_batch_YCID}
-        
     def data_shuffle(self, seqs):
         #seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID
         indices = list(range(len(seqs['x_length'])))
@@ -421,7 +392,7 @@ class InductiveController:
             seqs = self.data_shuffle(seqs)
             n_seqs = len(seqs['x_length'])
             
-            for start_index in range(0,20): #range(0, n_seqs-batch_size, batch_size):              
+            for start_index in range(0, n_seqs-self.batch_size, self.batch_size):              
                 print("\r%d/%d" %(int(start_index),n_seqs),end="")
                 wt_update_ct = 0
                 pad_seqs = self.get_batch(start_index, self.batch_size, seqs)
