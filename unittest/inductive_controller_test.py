@@ -2,6 +2,11 @@ import unittest
 import os
 print(f"current idr: {os.getcwd()}")
 # from tigger_package.inductive_controller import InductiveController
+
+import sys
+sys.path.append('/Users/tonpoppe/workspace/tigger_adj_rep/tigger_adj')
+
+
 import tigger_package as tp
 
 class InductiveControllerTest(unittest.TestCase):
