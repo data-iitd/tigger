@@ -21,7 +21,7 @@ from sklearn.neighbors import KDTree
 # import scann
 print("loaded")
 from model_classes.inductive_model import get_topk_event_prediction_rate
-from model_classes.edge_node_lstm import EdgeNodeLSTM
+from tigger_package.edge_node_lstm import EdgeNodeLSTM
 
 #%%
 feature_path = "data/bitcoin/feature_attributes.parquet"

@@ -20,7 +20,7 @@ from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 from sklearn.neighbors import KDTree
 from model_classes.inductive_model import get_topk_event_prediction_rate
-from model_classes.edge_node_lstm import EdgeNodeLSTM
+from tigger_package.edge_node_lstm import EdgeNodeLSTM
 # import scann
 print("loaded")
 
@@ -414,7 +414,7 @@ class InductiveController:
                 wt_update_ct += 1
                 if self.verbose>=2 and wt_update_ct%10 == 0:
                     for k,v in loss_dict.items():
-                        print(f"{k} = {np.mean(v[-print_ct:])}")
+                        print(f"{k} = {np.mean(v[-wt_update_ct:])}")
      
             running_loss = np.mean(loss_dict['loss'][-wt_update_ct:])
             epoch_wise_loss.append(running_loss)
