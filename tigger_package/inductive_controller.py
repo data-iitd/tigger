@@ -5,8 +5,7 @@ import random
 import pandas as pd
 from datetime import datetime
 from collections import defaultdict,Counter
-from tqdm.auto import tqdm
-import matplotlib.pyplot as plt
+from tqdm.auto import tqdm  
 import numpy as np
 import random
 import numpy as np
@@ -17,10 +16,12 @@ from tgg_utils import prepare_sample_probs, Edge, Node
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.cluster import KMeans
-import matplotlib.pyplot as plt
 from sklearn.neighbors import KDTree
-from model_classes.inductive_model import get_topk_event_prediction_rate
 from tigger_package.edge_node_lstm import EdgeNodeLSTM
+try:
+    import matplotlib.pyplot as plt
+except:
+    pass
 # import scann
 print("loaded")
 
@@ -65,7 +66,7 @@ class InductiveController:
         #prep model
         self.model, self.optimizer = self.initialize_model()
         
-        
+    
         if verbose >=2:
             print(f"number of edges in data file {self.data.shape[0]}")
             print(f"attributes found for edges: {self.edge_attr_cols}")
@@ -153,7 +154,7 @@ class InductiveController:
                 lengths.append(len(wk))
             print(f"Mean length {np.mean(lengths):.02f} and Std deviation {np.std(lengths):.02f}")
             plt.hist(lengths)
-            plt.xscale("log")
+            # plt.xscale("log")
             plt.title("histogram of random walk lengths")
             plt.show()
 
@@ -167,8 +168,10 @@ class InductiveController:
         edge_shape = edge.attributes.shape
         feat_dim = self.node_features.shape[1]
         vocab_id = self.vocab[edge.end]
-        random_walk = [(list(edge.attributes), vocab_id, self.cluster_labels[edge.end],
-                         self.node_features.iloc[vocab_id].values.tolist())]
+        random_walk = [(list(edge.attributes), 
+                        vocab_id, 
+                        self.cluster_labels[vocab_id],
+                        self.node_features.iloc[vocab_id].values.tolist())]
         done = False
         ct = 0
         while ct < self.l_w and not done: 
@@ -178,7 +181,9 @@ class InductiveController:
             else:
                 edge = np.random.choice(edge.outgoing_edges, 1, edge.out_nbr_sample_probs)[0]
                 vocab_id = self.vocab[edge.end]
-                random_walk.append((list(edge.attributes), vocab_id, self.cluster_labels[vocab_id], 
+                random_walk.append((list(edge.attributes), 
+                                    vocab_id, 
+                                    self.cluster_labels[vocab_id], 
                                     self.node_features.iloc[vocab_id].values.tolist()))
                 ct += 1
         return random_walk if len(random_walk) >= self.minimum_walk_length else None

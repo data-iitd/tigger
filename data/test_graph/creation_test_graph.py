@@ -14,13 +14,25 @@ emb_dim = 16
 
 #%% edgelist
 edge_dict = {'start': range(node_cnt-1), 'end': range(1,node_cnt)}
+
+# for i in range(edge_attr_cnt):
+#     if i%2==0:
+#         edge_dict['attr'+str(i)] = range(node_cnt-1)
+#     else:
+#         edge_dict['attr'+str(i)] = range(1, node_cnt)
+edge_list = pd.DataFrame(edge_dict)
+#swap last edge
+edge_list.iloc[9, 0] = 8
+
+
 for i in range(edge_attr_cnt):
     if i%2==0:
-        edge_dict['attr'+str(i)] = range(node_cnt-1)
+        edge_list['attr'+str(i)] = edge_list['start']
     else:
-        edge_dict['attr'+str(i)] = range(1, node_cnt)
-edge_list = pd.DataFrame(edge_dict)
+        edge_list['attr'+str(i)] = edge_list['end']
+
 edge_list.to_parquet(output_path + "test_edge_list.parquet")
+
 edge_list
 # %%
 node_dict = {'id': range(node_cnt)}
@@ -45,7 +57,7 @@ if __name__ == "__main__":
     node_feature_path = output_path + 'test_node_attr.parquet'
     edge_list_path = output_path + "test_edge_list.parquet"
     graphsage_embeddings_path = output_path + 'test_embedding.pickle'
-    n_walks=10
+    n_walks=7
     inductiveController = InductiveController(
         node_feature_path=node_feature_path,
         edge_list_path=edge_list_path,
@@ -53,7 +65,7 @@ if __name__ == "__main__":
         n_walks=n_walks,
         batch_size = 6,
         num_clusters = 5,
-        l_w = 7
+        l_w = 6
     )
     seqs = inductiveController.sample_random_Walks()
     seqs = inductiveController.get_X_Y_from_sequences(seqs)
