@@ -38,9 +38,10 @@ with open(output_path + 'test_embedding.pickle', 'wb') as handle:
     pickle.dump(embedding_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 # %%
-from inductive_controller import InductiveController
+from tigger_package.inductive_controller import InductiveController
 
 if __name__ == "__main__":
+    output_path = 'data/test_graph/'
     node_feature_path = output_path + 'test_node_attr.parquet'
     edge_list_path = output_path + "test_edge_list.parquet"
     graphsage_embeddings_path = output_path + 'test_embedding.pickle'
