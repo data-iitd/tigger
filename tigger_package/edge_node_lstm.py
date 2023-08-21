@@ -115,25 +115,27 @@ class EdgeNodeLSTM(nn.Module):
         hidden_b = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
         return (hidden_a, hidden_b)
 
-    def forward(self, seq_Xvocab_id, seq_Yvocab_id, 
-                seq_Xedge_attr, seq_Yedge_attr, 
-                seq_Xnode_attr, seq_Ynode_attr, 
+    def forward(self, vocab_id,  
+                edge_attr,  
+                node_attr,  
                 x_length, mask, 
-                kl_weight, seq_Xcluster_id, seq_Ycluster_id):
+                kl_weight, cluster_id):
         # reset the LSTM hidden state. Must be done before you run a new batch. Otherwise the LSTM will treat
         # a new batch as a continuation of a sequence
-        self.hidden = self.init_hidden()
-        batch_size, seq_len = seq_Xvocab_id.size()
+        self.hidden = self.init_hidden()           
+        batch_size, seq_len = vocab_id.size()
+        seq_len = seq_len-1
         
         # ---------------------
         # 1. embed the input
         # --------------------
         # Dim transformation: (batch_size, seq_len, 1) -> (batch_size, seq_len, embedding_dim)
 
-        X = self.gnn_embedding(seq_Xvocab_id)  # retrieve the gnn embedding from node vocab id
-        X = self.embedding_hidden(X)  #TODO WHY?
-        XCID_embedding = self.cluster_embeddings(seq_Xcluster_id)  # retrieve embedding for cluster id
-        X = torch.cat((seq_Xedge_attr, seq_Xnode_attr, X, XCID_embedding), -1)
+        embed = self.gnn_embedding(vocab_id)  # retrieve the gnn embedding from node vocab id
+        # X = self.embedding_hidden(X)  #TODO WHY?
+        CID_embedding = self.cluster_embeddings(cluster_id)  # retrieve embedding for cluster id
+        X = torch.cat((edge_attr, node_attr, embed, CID_embedding), -1)
+        X = X[:, :-1,]  # exclude last entry as input
         
         
         # ---------------------
@@ -163,7 +165,7 @@ class EdgeNodeLSTM(nn.Module):
         
         #YCID is expected to have size of batch_size*seq_len
         if self.training:  # select true cluster during training?
-            Y_clusterid_sampled = seq_Xcluster_id.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
+            Y_clusterid_sampled = cluster_id[:, 1:].unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
         else:  # select argmax cluster  during inference?
             Y_clusterid_sampled = torch.argmax(Y_clusterid,dim=2)
             Y_clusterid_sampled = Y_clusterid_sampled.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
@@ -182,33 +184,33 @@ class EdgeNodeLSTM(nn.Module):
         ne_hat = self.gnn_decoder3(ne_hat)  #3de layer decoder gnn embedding
         
         # Reconstruct edge features
-        edge_hat = self.edge_decoder2(self.relu_edge(self.edge_decoder1(z)))  # reconstruct  edge
-        edge_hat = self.edge_decoder3(edge_hat)  #3de layer decoder
+        edge_attr_hat = self.edge_decoder2(self.relu_edge(self.edge_decoder1(z)))  # reconstruct  edge
+        edge_attr_hat = self.edge_decoder3(edge_attr_hat)  #3de layer decoder
         
         # Reconstruct node features
-        feat_hat = self.feat_decoder2(self.relu_feat(self.feat_decoder1(z)))  # reconstruct  edge
-        feat_hat = self.feat_decoder3(feat_hat)  #3de layer decoder
+        node_attr_hat = self.feat_decoder2(self.relu_feat(self.feat_decoder1(z)))  # reconstruct  edge
+        node_attr_hat = self.feat_decoder3(node_attr_hat)  #3de layer decoder
         
         # prep y_true
-        Y = self.gnn_embedding(seq_Yvocab_id)
-        Y_temp = Y  #### Will be used to calculate the elbo loss
-        Y = Y.view(-1,Y.shape[2])
+        ne = self.gnn_embedding(vocab_id[:, 1:])
+        # Y_temp = Y  #### Will be used to calculate the elbo loss
+        # Y = Y.view(-1,Y.shape[2])
         
         # reconstruction loss
         kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
-        recon_loss_ne = self.mse_los_gnn(ne_hat,Y_temp)
+        recon_loss_ne = self.mse_los_gnn(ne_hat,ne)
         recon_loss_ne = recon_loss_ne.sum(-1)*mask
-        recon_loss_edge = self.mse_loss_edge(edge_hat, seq_Yedge_attr)
-        recon_loss_edge = recon_loss_edge.sum(-1)*mask
-        recon_loss_feat = self.mse_loss_feat(feat_hat, seq_Ynode_attr)
-        recon_loss_feat = recon_loss_feat.sum(-1)*mask
-        elbo = kl_weight*kl + recon_loss_ne + recon_loss_edge + recon_loss_feat  ### recon_loss 
+        recon_loss_edge_attr = self.mse_loss_edge(edge_attr_hat, edge_attr[:, 1:, :])
+        recon_loss_edge_attr = recon_loss_edge_attr.sum(-1)*mask
+        recon_loss_node_attr = self.mse_loss_feat(node_attr_hat, node_attr[:, 1:, :])
+        recon_loss_node_attr = recon_loss_node_attr.sum(-1)*mask
+        elbo = kl_weight*kl + recon_loss_ne + recon_loss_edge_attr + recon_loss_node_attr  ### recon_loss 
         num_events = mask.sum()
         elbo = elbo.sum()/num_events
         
         #cluster loss
         Y_clusterid = Y_clusterid.view(-1, Y_clusterid.shape[-1])
-        loss_cluster = self.celoss_cluster(Y_clusterid, seq_Xcluster_id.view(-1))
+        loss_cluster = self.celoss_cluster(Y_clusterid, cluster_id[:, 1:].reshape(-1))
         
         loss = elbo + loss_cluster
         
@@ -217,9 +219,9 @@ class EdgeNodeLSTM(nn.Module):
             'elbo_loss': elbo.item(),
             'kl_loss': (kl.sum()/num_events).item(),
             'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),
-            'reconstruction_edge': (recon_loss_edge.sum()/num_events).item(),
+            'reconstruction_edge': (recon_loss_edge_attr.sum()/num_events).item(),
             'cross_entropy_cluster': (loss_cluster.sum()/num_events).item(),
-            'reconstruction_feat': (recon_loss_feat.sum()/num_events).item(),
+            'reconstruction_feat': (recon_loss_node_attr.sum()/num_events).item(),
         }      
         
-        return ne_hat, edge_hat, loss, log_dict, Y_clusterid, feat_hat
+        return ne_hat, edge_attr_hat, loss, log_dict, Y_clusterid, node_attr_hat
