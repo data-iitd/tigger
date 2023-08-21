@@ -160,6 +160,50 @@ class InductiveControllerTest(unittest.TestCase):
                     self.assertTrue(sum(node_attr)==0, msg="attributes of end node are not null")
                     
     def test_x_y_sequences(self):
+        rws = self.inductiveController.sample_random_Walks()
+        seqs = self.inductiveController.get_X_Y_from_sequences(rws)
+        
+        for i, rw in enumerate(rws):
+            for j, step in enumerate(rw):
+                self.assertEquals(step[0], seqs['edge_attr'][i][j], msg="mismatch in edge attributes")
+                self.assertEqual(step[1], seqs['vocab_id'][i][j], msg="mismatch in vocab id")
+                self.assertEqual(step[2], seqs['cluster_id'][i][j], msg="mismatch in cluster id")
+                self.assertEquals(step[3], seqs['node_attr'][i][j], msg="mismatch in node attributes")
+                
+            steps = len(rw)
+            self.assertEqual(steps, seqs['x_length'][i], msg="mitmatch in walk length")
+            
+    def test_get_batch(self):
+        rws = self.inductiveController.sample_random_Walks()
+        seqs = self.inductiveController.get_X_Y_from_sequences(rws)
+        batch = self.inductiveController.get_batch(0, 6 , seqs)
+        
+        for i in range(6):  # single sequence
+            rw = rws[i]
+            for j, step in enumerate(rw):
+                self.assertEquals(step[0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge attributes")
+                self.assertEqual(step[1], batch['vocab_id'][i][j].tolist(), msg="mismatch in vocab id")
+                self.assertEqual(step[2], batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster id")
+                self.assertEquals(step[3], batch['node_attr'][i][j].tolist(), msg="mismatch in node attributes")
+                
+            steps = len(rw)
+            self.assertEqual(steps-1, batch['x_length'][i], msg="mitmatch in walk length")
+            
+            # check batch values
+            for j in range(steps, 6):
+                self.assertEquals([0, 0, 0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge padding")
+                self.assertEqual(0, batch['vocab_id'][i][j].tolist(), msg="mismatch in vocab padding")
+                self.assertEqual(0, batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster padding")
+                self.assertEquals([0, 0, 0], batch['node_attr'][i][j].tolist(), msg="mismatch in node padding")
+            
+            # check overall lengths  
+            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in edge length")
+            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in vocab length")
+            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in cluster length")
+            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in node length")  
+            
+            
+        
         
                 
         

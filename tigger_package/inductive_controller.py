@@ -295,28 +295,23 @@ class InductiveController:
             2: 'cluster_id',
             3: 'node_attr'
         }
-        res_dict ={'x_length': []}
-        for i, e in elements.items():
-            res_dict['seq_X'+e] = []
-            res_dict['seq_Y'+e] = []
-            
+        res_dict = defaultdict(list)            
         for seq in sequences:
             for i, e in elements.items():
-                res_dict['seq_X'+e].append([item[i] for item in seq[:-1]])
-                res_dict['seq_Y'+e].append([item[i] for item in seq[1:]])
-            res_dict['x_length'].append(len(seq)-1)
+                res_dict[e].append([item[i] for item in seq])
+            res_dict['x_length'].append(len(seq))
            
         return res_dict
 
     def get_batch(self, start_index, batch_size, seqs):
         """Creates padded batch copied to the torch device
-        seqs is a dict containing :seq_Xedge, seq_Yedge, seq_X, seq_Y, 
-        X_lengths, Y_lengths, seq_XCID, seq_YCID, max_len"""
-        # edge_attr_dim = len(seqs['seq_Xedge'][0][0])  # dimension of the edge attributes
+        seqs is a dict containing :
+        seq_edge, seq_X, X_lengths, seq_CID"""
         
         batch_seq = {}
         pad_batch_seq = {}
         pad_value = self.vocab['<PAD>']
+        # copy relevant part of seq into batch dic and create padding matrices
         for k,seq in seqs.items():
             if k == 'x_length':
                 x_length = seqs['x_length'][start_index:start_index+batch_size]
@@ -324,20 +319,22 @@ class InductiveController:
                 batch_seq[k] = seq[start_index:start_index+batch_size]
                 if type(seq[0][0])==list:
                     dim = len(seq[0][0])
-                    padding_shape = (batch_size, self.l_w, dim)
+                    padding_shape = (batch_size, self.l_w+1, dim)
                 else:
-                    padding_shape = (batch_size, self.l_w)
+                    padding_shape = (batch_size, self.l_w+1)
                 pad_batch_seq[k] = np.ones(padding_shape, dtype=np.int32) * pad_value
                
         
+        # join padding matrix with batch sequences
         for i, x_len in enumerate(x_length):
             for k, pad_seq in pad_batch_seq.items():
                 pad_seq[i, 0:x_len] = batch_seq[k][i]
                 
-        pad_batch_seq['x_length'] = x_length
+        pad_batch_seq['x_length'] = [l-1 for l in x_length]
         
+        # convert to tensor
         for k, pad_seq in pad_batch_seq.items():
-            if k[5:] in ['vocab_id', 'cluster_id'] or k == 'x_length':
+            if k in ['vocab_id', 'cluster_id', 'x_length']:
                 pad_batch_seq[k] = torch.LongTensor(pad_seq).to(self.device)
             else:
                 pad_batch_seq[k] = torch.FloatTensor(pad_seq).to(self.device)
@@ -402,7 +399,7 @@ class InductiveController:
                 wt_update_ct = 0
                 pad_seqs = self.get_batch(start_index, self.batch_size, seqs)
                 self.model.zero_grad()
-                mask_distribution = (pad_seqs['seq_Yvocab_id']!=0)
+                mask_distribution = (pad_seqs['vocab_id'][:, :-1]!=0)
                 mask_distribution = mask_distribution.to(self.device)
                 
                 # forward + backward pas
