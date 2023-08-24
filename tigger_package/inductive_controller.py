@@ -169,7 +169,7 @@ class InductiveController:
         feat_dim = self.node_features.shape[1]
         vocab_id = self.vocab[edge.end]
         random_walk = [(list(edge.attributes), 
-                        vocab_id, 
+                        self.normalized_dataset[vocab_id].tolist(), 
                         self.cluster_labels[vocab_id],
                         self.node_features.iloc[vocab_id].values.tolist())]
         done = False
@@ -177,12 +177,17 @@ class InductiveController:
         while ct < self.l_w and not done: 
             if len(edge.outgoing_edges) == 0:
                 done = True
-                random_walk.append((list(np.zeros(edge_shape)), 1, 1, list(np.zeros(feat_dim))))  # end vocab id and cluster
+                random_walk.append(
+                    (list(np.ones(edge_shape)),
+                     self.normalized_dataset[1].tolist(),
+                     self.cluster_labels[1],
+                     list(np.ones(feat_dim)))
+                    )  # end vocab id and cluster
             else:
                 edge = np.random.choice(edge.outgoing_edges, 1, edge.out_nbr_sample_probs)[0]
                 vocab_id = self.vocab[edge.end]
                 random_walk.append((list(edge.attributes), 
-                                    vocab_id, 
+                                    self.normalized_dataset[vocab_id].tolist(), 
                                     self.cluster_labels[vocab_id], 
                                     self.node_features.iloc[vocab_id].values.tolist()))
                 ct += 1
@@ -205,7 +210,7 @@ class InductiveController:
             node_embedding_matrix[index] = arr
        
         # create row normalized dataset excluding <padding>
-        norm = np.linalg.norm(node_embedding_matrix, axis=1)
+        norm = np.linalg.norm(node_embedding_matrix, ord=np.inf, axis=1)
         norm[norm==0] = 1  # set zero to 1 to avoid dividing by zero
         normalized_dataset = node_embedding_matrix / norm[:, np.newaxis] 
         
@@ -233,7 +238,6 @@ class InductiveController:
             
         return vocab_df
         
-    
     def reduce_embedding_dim_and_cluster(self):
         """reduced the embedding dimension with PCA and cluster the reduced embed dim
         returns a list of cluster labels ordered by vocab"""
@@ -291,7 +295,7 @@ class InductiveController:
         """
         elements = {
             0: 'edge_attr',
-            1: 'vocab_id',
+            1: 'node_embed',
             2: 'cluster_id',
             3: 'node_attr'
         }
@@ -334,7 +338,7 @@ class InductiveController:
         
         # convert to tensor
         for k, pad_seq in pad_batch_seq.items():
-            if k in ['vocab_id', 'cluster_id', 'x_length']:
+            if k in ['cluster_id', 'x_length']:
                 pad_batch_seq[k] = torch.LongTensor(pad_seq).to(self.device)
             else:
                 pad_batch_seq[k] = torch.FloatTensor(pad_seq).to(self.device)
@@ -353,9 +357,10 @@ class InductiveController:
     def initialize_model(self):
         edge_dim = self.edges[0].attributes.shape[0]  # edge dimension
         node_attr_dim = self.node_features.shape[1]
+        embed_dim = self.normalized_dataset.shape[1]
         elstm = EdgeNodeLSTM(
             vocab=self.vocab, 
-            node_pretrained_embedding=self.normalized_dataset,
+            gnn_dim=embed_dim,
             nb_layers=2, 
             nb_lstm_units=128,
             edge_attr_dim=edge_dim,
@@ -363,6 +368,7 @@ class InductiveController:
             clust_dim=64, # used for cluster embedding
             batch_size=self.batch_size,
             device=self.device,
+            kl_weight=self.kl_weight,
             num_components=self.num_clusters + 2  #incl padding + end cluster
         )
         elstm = elstm.to(self.device)
@@ -399,13 +405,11 @@ class InductiveController:
                 wt_update_ct = 0
                 pad_seqs = self.get_batch(start_index, self.batch_size, seqs)
                 self.model.zero_grad()
-                mask_distribution = (pad_seqs['vocab_id'][:, :-1]!=0)
-                mask_distribution = mask_distribution.to(self.device)
+                # mask_distribution = (pad_seqs['cluster_id'][:, 1:]!=0)
+                # mask_distribution = mask_distribution.to(self.device)
                 
                 # forward + backward pas
-                _, _, loss, log_dict, _, _ = self.model(
-                    **pad_seqs, mask=mask_distribution, kl_weight=self.kl_weight
-                )
+                _, _, loss, log_dict, _, _ = self.model(**pad_seqs)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
                 self.optimizer.step()
@@ -440,8 +444,29 @@ class InductiveController:
         torch.save(state, self.config_dir+"/models/best_model.pth".format(str(epoch)))
         
         return (epoch_wise_loss, loss_dict)
+    
+    def synthetic_nodes_to_seqs(self, nodes):
+        """convert list consisting of node embed, node attr and edge attr concatenated
+        into seqs dict"""
+        embed_dim = self.normalized_dataset.shape[1]
+        edge_dim = self.edges[0].attributes.shape[0]  # edge dimension
+        node_attr_dim = self.node_features.shape[1]
+        
+        seqs = {}
+        seqs['node_embed'] = [[list(s)] for s in nodes.iloc[:, :embed_dim].values]
+        seqs['node_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim:embed_dim+node_attr_dim].values]
+        seqs['edge_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim+node_attr_dim:].values]
+        seqs['x_length'] = [1]*nodes.shape[0]
+        return seqs
 
-
+    def create_synthetic_walks(self, synthetic_nodes, no_batches):
+        """create walks using the synthetics nodes as starting point"""
+        
+        for i in range(no_batches):
+            nodes = synthetic_nodes.sample(n=self.batch_size, replace=True, random_state=i)
+            pad_seqs = self.synthetic_nodes_to_seqs(nodes)
+            ne_hat, edge_attr_hat, _, _, Y_clusterid, node_attr_hat = self.model(**pad_seqs)
+        
 
 #%%
 if __name__ == "__main__":

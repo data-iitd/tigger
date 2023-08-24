@@ -1,6 +1,8 @@
 import unittest
 import os
 import sys
+import pandas as pd
+import numpy as np
 print(f"current idr: {os.getcwd()}")
 sys.path.append(os.getcwd())
 
@@ -143,21 +145,21 @@ class InductiveControllerTest(unittest.TestCase):
             
             for step in rw:
                 edge_attr = step[0]
-                vocab_id = step[1]
+                embed = step[1]
                 cluster_id = step[2]
                 node_attr = step[3]
                 node_id = step[3][0]  # first value of node feature
                 
-                if vocab_id != vocab['end_node']:
+                if cluster_id != vocab['end_node']:
                     self.assertTrue(edge_attr[1]== node_id, msg="middle edge feature is different from end node id")
-                    self.assertTrue(vocab[node_id] == vocab_id, msg="vocab id doesn't match with node id")
+                    self.assertTrue(len(embed) == 16, msg="vocab id doesn't match with node id")
                     self.assertTrue(cluster_id>1, msg="cluster id is less then 2")
                     
                 else:
-                    self.assertTrue(sum(edge_attr)==0, msg="attributes of end edge are not null")
+                    self.assertTrue(sum(edge_attr)==3, msg="attributes of end edge are not null")
                     self.assertTrue(step == rw[-1], msg="end node not at the end")
-                    self.assertTrue(cluster_id==1, msg="incorrect clustre id for end node")
-                    self.assertTrue(sum(node_attr)==0, msg="attributes of end node are not null")
+                    self.assertTrue(sum(embed)==16, msg="incorrect clustre id for end node")
+                    self.assertTrue(sum(node_attr)==3, msg="attributes of end node are not null")
                     
     def test_x_y_sequences(self):
         rws = self.inductiveController.sample_random_Walks()
@@ -166,7 +168,7 @@ class InductiveControllerTest(unittest.TestCase):
         for i, rw in enumerate(rws):
             for j, step in enumerate(rw):
                 self.assertEquals(step[0], seqs['edge_attr'][i][j], msg="mismatch in edge attributes")
-                self.assertEqual(step[1], seqs['vocab_id'][i][j], msg="mismatch in vocab id")
+                self.assertEquals(step[1], seqs['node_embed'][i][j], msg="mismatch in node_embed")
                 self.assertEqual(step[2], seqs['cluster_id'][i][j], msg="mismatch in cluster id")
                 self.assertEquals(step[3], seqs['node_attr'][i][j], msg="mismatch in node attributes")
                 
@@ -182,7 +184,7 @@ class InductiveControllerTest(unittest.TestCase):
             rw = rws[i]
             for j, step in enumerate(rw):
                 self.assertEquals(step[0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge attributes")
-                self.assertEqual(step[1], batch['vocab_id'][i][j].tolist(), msg="mismatch in vocab id")
+                self.assertEqual(step[1], batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed")
                 self.assertEqual(step[2], batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster id")
                 self.assertEquals(step[3], batch['node_attr'][i][j].tolist(), msg="mismatch in node attributes")
                 
@@ -192,18 +194,27 @@ class InductiveControllerTest(unittest.TestCase):
             # check batch values
             for j in range(steps, 6):
                 self.assertEquals([0, 0, 0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge padding")
-                self.assertEqual(0, batch['vocab_id'][i][j].tolist(), msg="mismatch in vocab padding")
+                self.assertEquals([0]*16, batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed padding")
                 self.assertEqual(0, batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster padding")
                 self.assertEquals([0, 0, 0], batch['node_attr'][i][j].tolist(), msg="mismatch in node padding")
             
             # check overall lengths  
-            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in edge length")
-            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in vocab length")
-            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in cluster length")
-            self.assertEqual(list(batch['vocab_id'][0].size()), [7], msg="mismatch in node length")  
+            self.assertEqual(list(batch['edge_attr'][0].size()), [7, 3], msg="mismatch in edge length")
+            self.assertEqual(list(batch['node_embed'][0].size()), [7, 16], msg="mismatch in node_embed length")
+            self.assertEqual(list(batch['cluster_id'][0].size()), [7], msg="mismatch in cluster length")
+            self.assertEqual(list(batch['node_attr'][0].size()), [7, 3], msg="mismatch in node length")  
             
-            
+    def test_synthetic_nodes_to_seqs(self):
+        nodes = pd.read_parquet("data/test_graph/synth_nodes.parquet")
+        seqs = self.inductiveController.synthetic_nodes_to_seqs(nodes.iloc[:10, :])
         
         
-                
+        self.assertAlmostEqual(sum(seqs['node_embed'][0][0]), 0.1*16, msg="mismatch in embedding")
+        self.assertAlmostEqual(sum(seqs['node_attr'][0][0]), 0.2*3, msg="mismatch in node_attr")
+        self.assertAlmostEqual(sum(seqs['edge_attr'][0][0]), 0.3*3, msg="mismatch in edge_attr")
+        
+        self.assertAlmostEqual(np.sum(np.array(seqs['node_embed'])), 0.1*16*10, msg="mismatch in embedding")
+        self.assertAlmostEqual(np.sum(np.array(seqs['node_attr'])), 0.2*3*10, msg="mismatch in node_Attr")
+        self.assertAlmostEqual(np.sum(np.array(seqs['edge_attr'])), 0.3*3*10, msg="mismatch in edge_attr")
+        
         

@@ -48,8 +48,29 @@ for n in range(node_cnt):
       
 with open(output_path + 'test_embedding.pickle', 'wb') as handle:
     pickle.dump(embedding_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    
+#%%
+start_node_dict = {}
+for i in range(16):
+    start_node_dict['attr'+str(i)] = [0.1]*30
+for i in range(16, 19):
+    start_node_dict['attr'+str(i)] = [0.2]*30
+for i in range(19, 22):
+    start_node_dict['attr'+str(i)] = [0.3]*30
+
+node_df = pd.DataFrame(start_node_dict)
+node_df
+node_df.to_parquet(output_path + 'synth_nodes.parquet')
 
 # %%
+
+import pandas as pd
+import numpy as np
+import pickle
+import os 
+os.chdir('../..')
+os.getcwd()
+#%%
 from tigger_package.inductive_controller import InductiveController
 
 if __name__ == "__main__":
@@ -75,3 +96,11 @@ if __name__ == "__main__":
     epoch_wise_loss, loss_dict = inductiveController.train_model()
 
 # %%
+
+    """
+    1) from the flownet sample N' time a node embedding including node attributes.
+    2) determine the corresponding cluster_id.
+    3) Feed to the forward loop edge attribute = 0-array, cluster_id, ne, na
+    4) read new edge attr, node attr, node emb and cluster id.
+    
+    """
