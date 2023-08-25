@@ -100,8 +100,9 @@ if __name__ == "__main__":
 
 # %%
 generated_nodes = pd.read_parquet("data/test_graph/synth_nodes.parquet")
+print(f"there are {generated_nodes.shape[0]} nodes generated")
 res = inductiveController. create_synthetic_walks(generated_nodes, 2)
-
+print(f"there are {generated_nodes.shape[0]} nodes after edge generation")
 
 #%%
 
