@@ -16,6 +16,7 @@ def convert_graph_from_defauldict_to_dict(graph):   #### Assuming each key conta
     for key,_ in graph.items():
         graph[key] = dict(graph[key])
     return dict(graph)
+
 def get_adj_graph_from_random_walks(random_walks,start_time, end_time,undirected=True):
     graph = defaultdict(lambda: defaultdict(lambda:defaultdict(lambda: 0)))
     for wk in tqdm(random_walks):
@@ -618,6 +619,8 @@ def sample_adj_graph_multinomial_k_inductive(graph,start,end,edge_count_needed,n
         print("Required edges count and node count , " ,req_edge_ct,req_node_ct)
     req_deg_seq.sort(reverse=True)
     #print(req_deg_seq)
+    
+    # create dit with key start_end_time and value count of occurence
     tedges = {}
     for time in range(start,end+1):
         if time in graph:
@@ -632,8 +635,10 @@ def sample_adj_graph_multinomial_k_inductive(graph,start,end,edge_count_needed,n
                             tedges[key] += count
                         else:
                             tedges[key] = count
+                            
                         
-    #print(tedges)
+                        
+    #create dic with key start_end nodes and value count
     edges = {}
     node_interaction_ct = defaultdict(lambda:defaultdict(lambda: 0))
     for edge,ct in tedges.items():
@@ -645,11 +650,11 @@ def sample_adj_graph_multinomial_k_inductive(graph,start,end,edge_count_needed,n
         if key not in edges:
             edges[key] = ct
         else:
-            edges[key] += ct
+            edges[key] += ct  # total number of edges between two nodes
 
 
     counts = list(edges.values())
-    counts.sort(reverse=True)
+    counts.sort(reverse=True)  # list of edge degee sorted descending
     if debug:
         print("Length of extracted edges", len(counts))
     if req_edge_ct < len(counts):

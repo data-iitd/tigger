@@ -1,3 +1,4 @@
+#%%
 import os
 import random
 import pandas as pd
@@ -20,6 +21,7 @@ from sklearn.model_selection import train_test_split
 import csv
 from torch.autograd import Variable
 from torch.nn import functional as F
+from sklearn.neighbors import KDTree
 
 from model_classes.inductive_model import EventClusterLSTM
 
@@ -29,36 +31,35 @@ from metrics.metrics import compute_graph_statistics,calculate_mmds,calculate_mm
 import sklearn
 
 from tgg_utils import *
+#%%
 
 ### configurations 
-parser = argparse.ArgumentParser()
-parser.add_argument("--data_path", help="full path of original dataset in csv format(start,end,time)",
-                    type=str)
-parser.add_argument("--gpu_num",help="GPU no. to use, -1 in case of no gpu", type=int)
-parser.add_argument("--config_path",help="full path of the folder where models and related data are saved during training", type=str)
-parser.add_argument("--model_name",help="name of the model need to be loaded", type=str)
-parser.add_argument("--random_walk_sampling_rate", help="No. of epochs to be sampled from random walks",type=int)
-parser.add_argument("--num_of_sampled_graphs",help="No. of times , a graph to be sampled", type=int)
-parser.add_argument("--graph_sage_embedding_path",help="GraphSage embedding path",type=str)
-parser.add_argument("--l_w",default=15,help="lw", type=int)
-parser.add_argument("--gan_embedding_path",default="",help="GAN embedding path",type=str)
+# parser = argparse.ArgumentParser()
+# parser.add_argument("--data_path", help="full path of original dataset in csv format(start,end,time)",
+#                     type=str)
+# parser.add_argument("--gpu_num",help="GPU no. to use, -1 in case of no gpu", type=int)
+# parser.add_argument("--config_path",help="full path of the folder where models and related data are saved during training", type=str)
+# parser.add_argument("--model_name",help="name of the model need to be loaded", type=str)
+# parser.add_argument("--random_walk_sampling_rate", help="No. of epochs to be sampled from random walks",type=int)
+# parser.add_argument("--num_of_sampled_graphs",help="No. of times , a graph to be sampled", type=int)
+# parser.add_argument("--graph_sage_embedding_path",help="GraphSage embedding path",type=str)
+# parser.add_argument("--l_w",default=15,help="lw", type=int)
+# parser.add_argument("--gan_embedding_path",default="",help="GAN embedding path",type=str)
 
 
-args = parser.parse_args()
-print(args)
-data_path = args.data_path
-gpu_num = args.gpu_num
-config_dir = args.config_path
-model_name = args.model_name
-random_walk_sampling_rate  = args.random_walk_sampling_rate
-num_of_sampled_graphs = args.num_of_sampled_graphs
-graph_sage_embedding_path = args.graph_sage_embedding_path
-l_w = args.l_w
-gan_embedding_path=args.gan_embedding_path
+# args = parser.parse_args()
+# print(args)
+data_path = "data/bitcoin/data.csv"
+gpu_num = 0
+config_dir = "temp/bitcoin_org"
+model_name = "best_model"
+random_walk_sampling_rate  = 2
+num_of_sampled_graphs = 1
+graph_sage_embedding_path = "graphsage_embeddings/bitcoin/embeddings.pkl"
+l_w = 20
+gan_embedding_path="graphsage_embeddings/bitcoin/gan_embeddings_N.npy"
 
-print("Input parameters")
-print(args)
-print("########")
+#%%
 
 
 strictly_increasing_walks = True
@@ -84,7 +85,8 @@ for start,end,day in data[['start','end','days']].values:
     if undirected:
         temporal_graph_original[day][end][start] += 1
         
-        
+#%%
+     
 import h5py
 node_embeddings_feature = pickle.load(open(graph_sage_embedding_path,"rb"))
 vocab = pickle.load(open(config_dir+"/vocab.pkl","rb"))
@@ -109,18 +111,21 @@ if gan_embedding_path!="":
 print("Final node embedding matrix,",node_embedding_matrix.shape)
 normalized_dataset = node_embedding_matrix[1:] / np.linalg.norm(node_embedding_matrix[1:], axis=1)[:, np.newaxis]
 import h5py
-hf = h5py.File(config_dir+'start_node_and_times.h5', 'r')
+hf = h5py.File(config_dir+'/start_node_and_times.h5', 'r')
 start_node_and_times = hf.get('1')
 start_node_and_times = np.array(start_node_and_times)
 start_node_and_times = list(start_node_and_times)
 hf.close()
+#%%
+# import scann
 
-import scann
+# searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
+#     num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
+#     2, anisotropic_quantization_threshold=0.2).reorder(100).build()
+    
+searcher = KDTree(normalized_dataset, leaf_size=40)
 
-searcher = scann.scann_ops_pybind.builder(normalized_dataset, 20, "dot_product").tree(
-    num_leaves=200, num_leaves_to_search=1000, training_sample_size=250000).score_ah(
-    2, anisotropic_quantization_threshold=0.2).reorder(100).build()
-
+#%%
 
 if gpu_num == -1:
     device = torch.device("cpu")
@@ -141,18 +146,20 @@ num_params = sum(p.numel() for p in elstm.parameters() if p.requires_grad)
 print(" ##### Number of parameters#### " ,num_params)
 
 
-best_model = torch.load(config_dir+"models/{}.pth".format(model_name),map_location=device)['model']
+best_model = torch.load(config_dir+"/models/{}.pth".format(model_name),map_location=device)['model']
 elstm.load_state_dict(best_model)
 elstm.eval()
 isdir = os.path.isdir(config_dir+"/results") 
 if not isdir:
     os.mkdir(config_dir+"/results")
+#%%
 
 for t in range(0, num_of_sampled_graphs):
     print("Sampling iteration, ", t)
     import random
     print("Random walk sampling rate", random_walk_sampling_rate)
-    sampled_start_node_times = random.sample(start_node_and_times,data.shape[0]*random_walk_sampling_rate)
+    # sampled_start_node_times = random.sample(start_node_and_times,data.shape[0]*random_walk_sampling_rate)
+    sampled_start_node_times = random.sample(start_node_and_times,5000)
     print("Selected,", len(sampled_start_node_times))
     start_index = 0
     print("Change it to 5000 in case of other large datasets")
@@ -244,7 +251,8 @@ for t in range(0, num_of_sampled_graphs):
                 T_hat = pad_batch_Xt.add(T_hat)
                 T_hat = torch.round(T_hat)
                 ne_hat = ne_hat.view(ne_hat.shape[0],-1)
-                sampled_Y, distances = searcher.search_batched(ne_hat.detach().cpu().numpy(), leaves_to_search=100, pre_reorder_num_neighbors=1000)
+                # sampled_Y, distances = searcher.search_batched(ne_hat.detach().cpu().numpy(), leaves_to_search=100, pre_reorder_num_neighbors=1000)
+                sampled_Y = searcher.query(ne_hat.detach().cpu().numpy(), k=1, return_distance=False)
                 sampled_Y = sampled_Y[:,:1]
                 sampled_Y = torch.LongTensor(np.int32(sampled_Y+1)).to(device)
                 pad_batch_X = sampled_Y
@@ -290,3 +298,4 @@ for t in range(0, num_of_sampled_graphs):
 #         lengths.append(len(sample_walk_event))
 #         sampled_walks.append((sample_walk_event,sample_walk_time))
 #     print("Mean length {} and Std deviation {}".format(str(np.mean(lengths)),str(np.std(lengths))))
+# %%

@@ -101,7 +101,7 @@ class InductiveControllerTest(unittest.TestCase):
         
         #check values for padding and end node
         self.assertEqual(node_features.iloc[vocab['<PAD>'],0], 0, msg="incorrect attr value for padding")
-        self.assertEqual(node_features.iloc[vocab['end_node'],0], 0, msg="incorrect attr value for end node")
+        self.assertEqual(node_features.iloc[vocab['end_node'],0], 1, msg="incorrect attr value for end node")
         
         for node_id in range(10):
             self.assertEqual(node_features.iloc[vocab[node_id],0], node_id, msg="incorrect attr value for nodes")
@@ -114,7 +114,7 @@ class InductiveControllerTest(unittest.TestCase):
         self.assertEqual(dims, (13,16), msg="incorrect embedding dims")
         
         #check values for padding and end node
-        self.assertEqual(sum(embed[vocab['<PAD>']]), 0, msg="incorrect embed value for padding")
+        self.assertEqual(sum(embed[vocab['<PAD>']]), 3, msg="incorrect embed value for padding")
         self.assertEqual(sum(embed[vocab['end_node']]), 16, msg="incorrect embed value for end node")
         
         for node_id in range(10):

@@ -16,7 +16,7 @@ from tgg_utils import prepare_sample_probs, Edge, Node
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.cluster import KMeans
-from sklearn.neighbors import KDTree
+from sklearn.neighbors import BallTree
 from tigger_package.edge_node_lstm import EdgeNodeLSTM
 try:
     import matplotlib.pyplot as plt
@@ -51,6 +51,7 @@ class InductiveController:
         self.batch_size = batch_size
         self.kl_weight = kl_weight
         self.device = self.get_device()
+        random.seed(1)
 
         #prep data
         self.data = pd.read_parquet(edge_list_path)  # edge list
@@ -65,6 +66,7 @@ class InductiveController:
         
         #prep model
         self.model, self.optimizer = self.initialize_model()
+    
         
     
         if verbose >=2:
@@ -222,7 +224,7 @@ class InductiveController:
     
     def create_feature_matrix_from_pandas(self, parquet_filename):
         feat_df = pd.read_parquet(parquet_filename)  #has id column with node number
-        vocab_df = (
+        node_attr = (
             pd.DataFrame
             .from_dict(self.vocab, orient='index', columns=['vocab_id'], dtype='int64')
             .reset_index(names='id')
@@ -231,12 +233,13 @@ class InductiveController:
             .set_index('vocab_id')   
             .drop('id', axis=1)        
         )
+        node_attr.iloc[self.vocab['end_node']]=1
         
         #check if all rows of the feature are mapped to the vocab
-        assert feat_df.shape[0] + 2 == vocab_df.shape[0], \
+        assert feat_df.shape[0] + 2 == node_attr.shape[0], \
             "feat df has {feat_df.shape[0]} rows and vocab has {vocab_df.shape[0]} instead of {feat_df.shape[0] + 2}"
             
-        return vocab_df
+        return node_attr
         
     def reduce_embedding_dim_and_cluster(self):
         """reduced the embedding dimension with PCA and cluster the reduced embed dim
@@ -463,22 +466,22 @@ class InductiveController:
         cluster = self.kmeans.predict(embed_reduced)
         return cluster
     
-    def synthetic_nodes_to_seqs(self, nodes):
+    def synthetic_nodes_to_seqs(self, node_ids, nodes):
         """convert list consisting of node embed, node attr and edge attr concatenated
         into seqs dict"""
         embed_dim = self.normalized_dataset.shape[1]
-        edge_dim = self.edges[0].attributes.shape[0]
         
         seqs = {}
-        seqs['node_embed'] = [[list(s)] for s in nodes.iloc[:, :embed_dim].values]
-        seqs['cluster_id'] = [[s] for s in self.embed_to_cluster(nodes.iloc[:, :embed_dim].values)]
-        seqs['node_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim:].values]
-        seqs['edge_attr'] = [[[0]*edge_dim] for s in range(self.batch_size)]
+        seqs['node_id'] = node_ids
+        seqs['has_ended'] = []  # used to track sequences for which an end node is generated
+        seqs['node_embed'] = [[list(s)] for s in nodes.iloc[node_ids, :embed_dim].values]
+        seqs['cluster_id'] = [[s] for s in self.embed_to_cluster(nodes.iloc[node_ids, :embed_dim].values)]
+        seqs['node_attr'] = [[list(s)] for s in nodes.iloc[node_ids, embed_dim:].values]
         
         for k, pad_seq in seqs.items():               
             if k in ['cluster_id']:
                 seqs[k] = torch.LongTensor(pad_seq).to(self.device)
-            else:
+            if k in ['node_embed', 'node_attr']:
                 seqs[k] = torch.FloatTensor(pad_seq).to(self.device)
         return seqs
     
@@ -490,36 +493,102 @@ class InductiveController:
         for k, seq in generated_seqs_batch.items():
             generated_seqs[k] = generated_seqs.get(k, []) + seq.tolist()
             
-    def y_hat_to_x_batch(self, y_hat):
-        """removes the _hat phrase from the dict keys"""
+    def extract_edge(self, x_batch, new_x_batch, end_node_id):
+        edges = []
+        has_ended = x_batch['has_ended']
+        for i, end_id in enumerate(new_x_batch['node_id']):
+            if i not in has_ended:  # no end node has been generated earlier
+                if end_id != end_node_id:
+                    start_id = x_batch['node_id'][i]
+                    edge_attr = new_x_batch['edge_attr'][i].tolist()
+                    edges.append((start_id, end_id, edge_attr))
+                else:
+                    has_ended.append(i)
+        new_x_batch['has_ended'] = has_ended
+        return edges
+            
+    def y_hat_to_x_batch(self, y_hat, searcher, synthetic_nodes):
+        """removes the _hat phrase from the dict keys and maps the inferece node embed and edge
+        to the generated synthetic nodes"""
+        embed_dim = self.normalized_dataset.shape[1]
         x_batch = {}
         
+        # remove -hat phrase in key
         for k,v in y_hat.items():
             if k != 'cluster_id_hat_vector':
                 x_batch[k[:-4]] = v
+                
+        # get nearest synthic node
+        inferred_node_vector = torch.cat((x_batch['node_embed'], x_batch['node_attr']), -1)
+        _, mapped_id = searcher.query(torch.squeeze(inferred_node_vector, 1).tolist(), k=1)
+        mapped_synth_node = synthetic_nodes.iloc[np.squeeze(mapped_id, 1)]
+        x_batch['node_id'] = np.squeeze(mapped_id, 1).tolist()
+        
+        
+        # replace inference node prop with mapped synthetic node
+        x_batch['node_embed'] = [[list(s)] for s in mapped_synth_node.iloc[:, :embed_dim].values]
+        x_batch['node_embed'] = torch.FloatTensor(x_batch['node_embed']).to(self.device)
+        x_batch['cluster_id'] = [[s] for s in self.embed_to_cluster(mapped_synth_node.iloc[:, :embed_dim].values)]
+        x_batch['cluster_id'] = torch.LongTensor(x_batch['cluster_id']).to(self.device)
+        x_batch['node_attr'] = [[list(s)] for s in mapped_synth_node.iloc[:, embed_dim:].values]
+        x_batch['node_attr'] = torch.FloatTensor(x_batch['node_attr']).to(self.device)
         
         return x_batch
         
+    def get_input_batch(self, x_batch):
+        input_batch = {}
+        for k in ['node_embed', 'cluster_id', 'node_attr']:
+            input_batch[k] = x_batch[k]
+        
+        input_batch['x_length'] = [1]*x_batch['node_embed'].shape[0]
+        return input_batch
 
+    def add_end_node(self, synthetic_nodes):
+        embed_dim = self.normalized_dataset.shape[1]
+        node_attr_dim = self.node_features.shape[1]
+        end_node_id = synthetic_nodes.shape[0]
+        synthetic_nodes.loc[end_node_id] = [1]*(embed_dim+node_attr_dim)
+        return end_node_id
+        
+    def remove_end_nodes(self, new_x_batch, end_node_id):
+        x_batch = {}
+        no_end_node_ids = []
+        for i, node_id in enumerate(new_x_batch['node_id']):
+            if node_id != end_node_id:
+                no_end_node_ids.append(i)
+           
+        id_tensor = torch.LongTensor(no_end_node_ids).to(self.device)     
+        for k,v in new_x_batch.items():
+            if k != 'node_id':
+                x_batch[k] = torch.index_select(v, 0, id_tensor)
+            else:
+                x_batch[k] = [v[i] for i in no_end_node_ids]
+            
+        return x_batch
+    
     def create_synthetic_walks(self, synthetic_nodes, no_batches):
         """create walks using the synthetics nodes as starting point"""
         
         self.model.eval()
+        node_count = synthetic_nodes.shape[0]
+        end_node_id = self.add_end_node(synthetic_nodes)
+        searcher = BallTree(synthetic_nodes, leaf_size=40)  # used to map the walks to the synth nodes
         
-        generated_seqs = {}
-        for i in range(no_batches):
-            nodes = synthetic_nodes.sample(n=self.batch_size, replace=True, random_state=i)
-            generated_seq_batch = self.synthetic_nodes_to_seqs(nodes)
-            x_batch = generated_seq_batch.copy()
-            for step in range(self.l_w):
-                x_batch.pop('edge_attr')
-                y_hat = self.model(**x_batch, x_length=[1]*self.batch_size)
-                x_batch = self.y_hat_to_x_batch(y_hat)
-                self.merge_inference_step(generated_seq_batch, x_batch)
-                
-                
-            self.merge_inference_batch(generated_seqs, generated_seq_batch)
+        
+        generated_seqs = []
+        for i in range(no_batches): 
+            node_ids = random.choices(range(node_count), k=self.batch_size)
+            x_batch = self.synthetic_nodes_to_seqs(node_ids, synthetic_nodes)
+            self.model.init_hidden()  # set the hidden state of lstm to zero 
+            step = 0
             
+            while step < self.l_w and len(x_batch['has_ended']) < self.batch_size:
+                y_hat = self.model(**self.get_input_batch(x_batch))
+                new_x_batch = self.y_hat_to_x_batch(y_hat, searcher, synthetic_nodes)
+                generated_seqs = generated_seqs + self.extract_edge(x_batch, new_x_batch, end_node_id)
+                x_batch = new_x_batch
+                step += 1
+        
         return generated_seqs
                 
                 

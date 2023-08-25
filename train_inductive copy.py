@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-import sklearn
+# import sklearn
 from sklearn.model_selection import train_test_split
 import csv
 from torch.autograd import Variable
@@ -53,7 +53,7 @@ from model_classes.inductive_model import EventClusterLSTM,get_event_prediction_
 
 data_path = "data/bitcoin/data.csv"
 gpu_num = -1
-config_path = "temp/"
+config_path = "temp/bitcoin_org"
 num_epochs = 1
 graphsage_embeddings_path = "graphsage_embeddings/bitcoin/embeddings.pkl"
 num_clusters = 500
@@ -150,8 +150,8 @@ for node in data['end']:
 print("Length of vocab, ", len(vocab))
 print("Id of end node , ",vocab['end_node'])
 pad_token = vocab['<PAD>']
-
-
+pickle.dump(vocab, open(config_path+"/vocab.pkl", "wb"))
+#%%
 # create random walks + sequences
 def sample_random_Walks():
     print("Running Random Walk, Length of edges, ", len(edges))
@@ -268,12 +268,12 @@ if not isdir:
 # list of first node in sequences
 start_node_and_times = [(seq[0][0],seq[0][1],seq[0][2],seq[0][3]) for seq in sequences ]
 
-# pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))
-# pickle.dump(cluster_labels,open(config_dir+"/cluster_labels.pkl","wb"))
-# pickle.dump(pca,open(config_dir+"/pca.pkl","wb"))
-# pickle.dump(kmeans,open(config_dir+"/kmeans.pkl","wb"))
-# pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
-# np.save(open(config_dir+"/node_embedding_matrix.npy","wb"),node_embedding_matrix)
+pickle.dump(vocab,open(config_dir+"/vocab.pkl","wb"))
+pickle.dump(cluster_labels,open(config_dir+"/cluster_labels.pkl","wb"))
+pickle.dump(pca,open(config_dir+"/pca.pkl","wb"))
+pickle.dump(kmeans,open(config_dir+"/kmeans.pkl","wb"))
+pickle.dump({"mean_log_inter_time":mean_log_inter_time,"std_log_inter_time":std_log_inter_time},open(config_dir+"/time_stats.pkl","wb"))
+np.save(open(config_dir+"/node_embedding_matrix.npy","wb"),node_embedding_matrix)
 
 def get_X_Y_T_CID_from_sequences(sequences):  ### This also need to provide the cluster id of the 
     seq_X = []
@@ -546,4 +546,3 @@ for epoch in range(0,num_epochs+1):
         torch.save(state, config_dir+"/models/best_model.pth".format(str(epoch)))
 
 
-# %%
