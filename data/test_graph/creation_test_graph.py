@@ -55,8 +55,6 @@ for i in range(16):
     start_node_dict['attr'+str(i)] = [0.1]*30
 for i in range(16, 19):
     start_node_dict['attr'+str(i)] = [0.2]*30
-for i in range(19, 22):
-    start_node_dict['attr'+str(i)] = [0.3]*30
 
 node_df = pd.DataFrame(start_node_dict)
 node_df
@@ -71,6 +69,11 @@ import os
 os.chdir('../..')
 os.getcwd()
 #%%
+import tigger_package.inductive_controller
+# import tigger_package.edge_node_lstm
+import importlib
+importlib.reload(tigger_package.inductive_controller)
+# importlib.reload(tigger_package.edge_node_lstm)
 from tigger_package.inductive_controller import InductiveController
 
 if __name__ == "__main__":
@@ -96,6 +99,11 @@ if __name__ == "__main__":
     epoch_wise_loss, loss_dict = inductiveController.train_model()
 
 # %%
+generated_nodes = pd.read_parquet("data/test_graph/synth_nodes.parquet")
+res = inductiveController. create_synthetic_walks(generated_nodes, 2)
+
+
+#%%
 
     """
     1) from the flownet sample N' time a node embedding including node attributes.

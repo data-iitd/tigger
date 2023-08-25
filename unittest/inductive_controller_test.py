@@ -178,31 +178,38 @@ class InductiveControllerTest(unittest.TestCase):
     def test_get_batch(self):
         rws = self.inductiveController.sample_random_Walks()
         seqs = self.inductiveController.get_X_Y_from_sequences(rws)
-        batch = self.inductiveController.get_batch(0, 6 , seqs)
+        x_batch, y_batch = self.inductiveController.get_batch(0, 6 , seqs)
         
         for i in range(6):  # single sequence
             rw = rws[i]
-            for j, step in enumerate(rw):
-                self.assertEquals(step[0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge attributes")
-                self.assertEqual(step[1], batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed")
-                self.assertEqual(step[2], batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster id")
-                self.assertEquals(step[3], batch['node_attr'][i][j].tolist(), msg="mismatch in node attributes")
+            for j, step in enumerate(rw[:-1]):
+                self.assertEquals(step[0], x_batch['edge_attr'][i][j].tolist(), msg="mismatch in edge attributes")
+                self.assertEqual(step[1], x_batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed")
+                self.assertEqual(step[2], x_batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster id")
+                self.assertEquals(step[3], x_batch['node_attr'][i][j].tolist(), msg="mismatch in node attributes")
+            
+            for j, step in enumerate(rw[1:]):
+                self.assertEquals(step[0], y_batch['edge_attr'][i][j].tolist(), msg="mismatch in edge attributes")
+                self.assertEqual(step[1], y_batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed")
+                self.assertEqual(step[2], y_batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster id")
+                self.assertEquals(step[3], y_batch['node_attr'][i][j].tolist(), msg="mismatch in node attributes")
                 
             steps = len(rw)
-            self.assertEqual(steps-1, batch['x_length'][i], msg="mitmatch in walk length")
+            self.assertEqual(steps-1, x_batch['x_length'][i], msg="mitmatch in walk length")
+            self.assertEqual(steps-1, y_batch['x_length'][i], msg="mitmatch in walk length")
             
             # check batch values
             for j in range(steps, 6):
-                self.assertEquals([0, 0, 0], batch['edge_attr'][i][j].tolist(), msg="mismatch in edge padding")
-                self.assertEquals([0]*16, batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed padding")
-                self.assertEqual(0, batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster padding")
-                self.assertEquals([0, 0, 0], batch['node_attr'][i][j].tolist(), msg="mismatch in node padding")
+                self.assertEquals([0, 0, 0], x_batch['edge_attr'][i][j].tolist(), msg="mismatch in edge padding")
+                self.assertEquals([0]*16, x_batch['node_embed'][i][j].tolist(), msg="mismatch in node_embed padding")
+                self.assertEqual(0, x_batch['cluster_id'][i][j].tolist(), msg="mismatch in cluster padding")
+                self.assertEquals([0, 0, 0], x_batch['node_attr'][i][j].tolist(), msg="mismatch in node padding")
             
             # check overall lengths  
-            self.assertEqual(list(batch['edge_attr'][0].size()), [7, 3], msg="mismatch in edge length")
-            self.assertEqual(list(batch['node_embed'][0].size()), [7, 16], msg="mismatch in node_embed length")
-            self.assertEqual(list(batch['cluster_id'][0].size()), [7], msg="mismatch in cluster length")
-            self.assertEqual(list(batch['node_attr'][0].size()), [7, 3], msg="mismatch in node length")  
+            self.assertEqual(list(x_batch['edge_attr'][0].size()), [6, 3], msg="mismatch in edge length")
+            self.assertEqual(list(x_batch['node_embed'][0].size()), [6, 16], msg="mismatch in node_embed length")
+            self.assertEqual(list(x_batch['cluster_id'][0].size()), [6], msg="mismatch in cluster length")
+            self.assertEqual(list(x_batch['node_attr'][0].size()), [6, 3], msg="mismatch in node length")  
             
     def test_synthetic_nodes_to_seqs(self):
         nodes = pd.read_parquet("data/test_graph/synth_nodes.parquet")

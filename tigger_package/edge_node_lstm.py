@@ -33,7 +33,7 @@ class EdgeNodeLSTM(nn.Module):
         
         # design LSTM
         self.lstm = nn.LSTM(
-            input_size=self.clust_dim + self.gnn_dim + self.edge_attr_dim + self.node_attr_dim,   ## cluster + GNN + edge embedding
+            input_size=self.clust_dim + self.gnn_dim + self.node_attr_dim,   ## cluster + GNN + edge embedding
             hidden_size=self.nb_lstm_units,
             num_layers=self.nb_lstm_layers,
             batch_first=True,
@@ -105,25 +105,22 @@ class EdgeNodeLSTM(nn.Module):
         hidden_b = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
         return (hidden_a, hidden_b)
 
-    def forward(self, node_embed,  
-                edge_attr,  
+    def forward(self, node_embed,    
                 node_attr,  
                 x_length, 
                 cluster_id):
         # reset the LSTM hidden state. Must be done before you run a new batch. Otherwise the LSTM will treat
         # a new batch as a continuation of a sequence
-        self.hidden = self.init_hidden()           
+        if self.training:
+            self.hidden = self.init_hidden()           
         batch_size, seq_len, _ = node_embed.size()
-        seq_len = seq_len-1
         
         # ---------------------
         # 1. embed the input
         # --------------------
         # Dim transformation: (batch_size, seq_len, 1) -> (batch_size, seq_len, embedding_dim)
         CID_embedding = self.cluster_embeddings(cluster_id)  # retrieve embedding for cluster id
-        X = torch.cat((edge_attr, node_attr, node_embed, CID_embedding), -1)
-        X = X[:, :-1,]  # exclude last entry as input
-        
+        X = torch.cat((node_attr, node_embed, CID_embedding), -1)        
         
         # ---------------------
         # 2. Run through RNN
@@ -152,11 +149,11 @@ class EdgeNodeLSTM(nn.Module):
         
         #YCID is expected to have size of batch_size*seq_len
         if self.training:  # select true cluster during training?
-            Y_clusterid_sampled = cluster_id[:, 1:].unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
-        else:  # select argmax cluster  during inference?
-            Y_clusterid_sampled = torch.argmax(Y_clusterid,dim=2)
-            Y_clusterid_sampled = Y_clusterid_sampled.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)
+            cluster_id_hat = cluster_id
+        else:
+            cluster_id_hat = torch.argmax(Y_clusterid,dim=2)
             
+        Y_clusterid_sampled = cluster_id_hat.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)            
         # retrieve mu and log_var for y_cluster
         mu = torch.gather(mu,2,Y_clusterid_sampled).squeeze(2)
         log_var = torch.gather(log_var,2,Y_clusterid_sampled).squeeze(2)
@@ -178,38 +175,46 @@ class EdgeNodeLSTM(nn.Module):
         node_attr_hat = self.feat_decoder2(self.relu_feat(self.feat_decoder1(z)))  # reconstruct  edge
         node_attr_hat = self.feat_decoder3(node_attr_hat)  #3de layer decoder
         
-        # prep y_true
-        ne = node_embed[:, 1:]
-        # Y_temp = Y  #### Will be used to calculate the elbo loss
-        # Y = Y.view(-1,Y.shape[2])
+        mask = cluster_id!=0  #TODO check if mask is same as in loss
+        if self.training:
+            self.kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
         
+        return {'node_embed_hat': ne_hat,
+                'edge_attr_hat': edge_attr_hat,
+                'cluster_id_hat_vector': Y_clusterid,
+                'cluster_id_hat': cluster_id_hat,
+                'node_attr_hat': node_attr_hat,
+                }
+        
+    def train_los(self, node_embed_hat, edge_attr_hat, cluster_id_hat_vector, node_attr_hat,
+            cluster_id_hat, node_embed, edge_attr, node_attr, x_length, cluster_id
+        ):        
         # reconstruction loss
-        mask = cluster_id[:, 1:]!=0
-        kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
-        recon_loss_ne = self.mse_los_gnn(ne_hat,ne)
+        mask = cluster_id!=0
+        recon_loss_ne = self.mse_los_gnn(node_embed_hat,node_embed)
         recon_loss_ne = recon_loss_ne.sum(-1)*mask
-        recon_loss_edge_attr = self.mse_loss_edge(edge_attr_hat, edge_attr[:, 1:, :])
+        recon_loss_edge_attr = self.mse_loss_edge(edge_attr_hat, edge_attr)
         recon_loss_edge_attr = recon_loss_edge_attr.sum(-1)*mask
-        recon_loss_node_attr = self.mse_loss_feat(node_attr_hat, node_attr[:, 1:, :])
+        recon_loss_node_attr = self.mse_loss_feat(node_attr_hat, node_attr)
         recon_loss_node_attr = recon_loss_node_attr.sum(-1)*mask
-        elbo = self.kl_weight*kl + recon_loss_ne + recon_loss_edge_attr + recon_loss_node_attr  ### recon_loss 
+        elbo = self.kl_weight*self.kl + recon_loss_ne + recon_loss_edge_attr + recon_loss_node_attr  ### recon_loss 
         num_events = x_length.sum()
         elbo = elbo.sum()/num_events
         
         #cluster loss
-        Y_clusterid = Y_clusterid.view(-1, Y_clusterid.shape[-1])
-        loss_cluster = self.celoss_cluster(Y_clusterid, cluster_id[:, 1:].reshape(-1))
+        cluster_id_hat_vector = cluster_id_hat_vector.view(-1, cluster_id_hat_vector.shape[-1])
+        loss_cluster = self.celoss_cluster(cluster_id_hat_vector, cluster_id.reshape(-1))
         
         loss = elbo + loss_cluster
         
         log_dict = {
             'loss': loss.item(),
             'elbo_loss': elbo.item(),
-            'kl_loss': (kl.sum()/num_events).item(),
+            'kl_loss': (self.kl.sum()/num_events).item(),
             'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),
             'reconstruction_edge': (recon_loss_edge_attr.sum()/num_events).item(),
             'cross_entropy_cluster': (loss_cluster.sum()/num_events).item(),
             'reconstruction_feat': (recon_loss_node_attr.sum()/num_events).item(),
         }      
         
-        return ne_hat, edge_attr_hat, loss, log_dict, Y_clusterid, node_attr_hat
+        return loss, log_dict

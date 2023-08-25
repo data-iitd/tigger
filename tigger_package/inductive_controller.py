@@ -60,7 +60,7 @@ class InductiveController:
         self.node_features = self.create_feature_matrix_from_pandas(self.feature_path)
         
         self.node_embedding_matrix, self.normalized_dataset = self.create_node_embedding_matrix_from_dict()
-        self.cluster_labels = self.reduce_embedding_dim_and_cluster()
+        self.cluster_labels, self.kmeans, self.pca = self.reduce_embedding_dim_and_cluster()
         self.define_sample_with_prob_per_edge()
         
         #prep model
@@ -263,7 +263,7 @@ class InductiveController:
             max_label = np.max(cluster_labels)
             print("Max cluster label",max_label)
         
-        return cluster_labels
+        return cluster_labels, kmeans, pca
 
     def prep_config_dir(self, config_path):
         config_dir = config_path ### Change in random walks
@@ -337,13 +337,25 @@ class InductiveController:
         pad_batch_seq['x_length'] = [l-1 for l in x_length]
         
         # convert to tensor
-        for k, pad_seq in pad_batch_seq.items():
+        x_batch = {}
+        y_batch = {}
+        for k, pad_seq in pad_batch_seq.items():               
             if k in ['cluster_id', 'x_length']:
-                pad_batch_seq[k] = torch.LongTensor(pad_seq).to(self.device)
+                torch_seq = torch.LongTensor(pad_seq).to(self.device)
             else:
-                pad_batch_seq[k] = torch.FloatTensor(pad_seq).to(self.device)
-        
-        return pad_batch_seq
+                torch_seq = torch.FloatTensor(pad_seq).to(self.device)
+                
+            # split in x and y
+            if k == 'x_length':
+                x_batch[k] = torch_seq
+                y_batch[k] = torch_seq
+            else:
+                x_batch[k] = torch_seq[:, :-1] 
+                y_batch[k] = torch_seq[:, 1:] 
+                
+        x_batch.pop('edge_attr')
+   
+        return x_batch, y_batch
         
     def data_shuffle(self, seqs):
         #seq_Xedge, seq_Yedge, seq_X, seq_Y, X_lengths, Y_lengths, seq_XCID, seq_YCID
@@ -403,13 +415,14 @@ class InductiveController:
             for start_index in range(0, n_seqs-self.batch_size, self.batch_size):              
                 print("\r%d/%d" %(int(start_index),n_seqs),end="")
                 wt_update_ct = 0
-                pad_seqs = self.get_batch(start_index, self.batch_size, seqs)
+                x_batch, y_batch = self.get_batch(start_index, self.batch_size, seqs)
                 self.model.zero_grad()
                 # mask_distribution = (pad_seqs['cluster_id'][:, 1:]!=0)
                 # mask_distribution = mask_distribution.to(self.device)
                 
                 # forward + backward pas
-                _, _, loss, log_dict, _, _ = self.model(**pad_seqs)
+                y_hat= self.model(**x_batch)
+                loss, log_dict = self.model.train_los(**y_hat, **y_batch)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
                 self.optimizer.step()
@@ -445,27 +458,71 @@ class InductiveController:
         
         return (epoch_wise_loss, loss_dict)
     
+    def embed_to_cluster(self, embed):
+        embed_reduced = self.pca.transform(embed)
+        cluster = self.kmeans.predict(embed_reduced)
+        return cluster
+    
     def synthetic_nodes_to_seqs(self, nodes):
         """convert list consisting of node embed, node attr and edge attr concatenated
         into seqs dict"""
         embed_dim = self.normalized_dataset.shape[1]
-        edge_dim = self.edges[0].attributes.shape[0]  # edge dimension
-        node_attr_dim = self.node_features.shape[1]
+        edge_dim = self.edges[0].attributes.shape[0]
         
         seqs = {}
         seqs['node_embed'] = [[list(s)] for s in nodes.iloc[:, :embed_dim].values]
-        seqs['node_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim:embed_dim+node_attr_dim].values]
-        seqs['edge_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim+node_attr_dim:].values]
-        seqs['x_length'] = [1]*nodes.shape[0]
+        seqs['cluster_id'] = [[s] for s in self.embed_to_cluster(nodes.iloc[:, :embed_dim].values)]
+        seqs['node_attr'] = [[list(s)] for s in nodes.iloc[:, embed_dim:].values]
+        seqs['edge_attr'] = [[[0]*edge_dim] for s in range(self.batch_size)]
+        
+        for k, pad_seq in seqs.items():               
+            if k in ['cluster_id']:
+                seqs[k] = torch.LongTensor(pad_seq).to(self.device)
+            else:
+                seqs[k] = torch.FloatTensor(pad_seq).to(self.device)
         return seqs
+    
+    def merge_inference_step(self, generated_seq_batch, y_hat):
+        for k, seq in generated_seq_batch.items():
+            generated_seq_batch[k] = torch.cat((seq,y_hat[k]), 1)
+            
+    def merge_inference_batch(self, generated_seqs, generated_seqs_batch):
+        for k, seq in generated_seqs_batch.items():
+            generated_seqs[k] = generated_seqs.get(k, []) + seq.tolist()
+            
+    def y_hat_to_x_batch(self, y_hat):
+        """removes the _hat phrase from the dict keys"""
+        x_batch = {}
+        
+        for k,v in y_hat.items():
+            if k != 'cluster_id_hat_vector':
+                x_batch[k[:-4]] = v
+        
+        return x_batch
+        
 
     def create_synthetic_walks(self, synthetic_nodes, no_batches):
         """create walks using the synthetics nodes as starting point"""
         
+        self.model.eval()
+        
+        generated_seqs = {}
         for i in range(no_batches):
             nodes = synthetic_nodes.sample(n=self.batch_size, replace=True, random_state=i)
-            pad_seqs = self.synthetic_nodes_to_seqs(nodes)
-            ne_hat, edge_attr_hat, _, _, Y_clusterid, node_attr_hat = self.model(**pad_seqs)
+            generated_seq_batch = self.synthetic_nodes_to_seqs(nodes)
+            x_batch = generated_seq_batch.copy()
+            for step in range(self.l_w):
+                x_batch.pop('edge_attr')
+                y_hat = self.model(**x_batch, x_length=[1]*self.batch_size)
+                x_batch = self.y_hat_to_x_batch(y_hat)
+                self.merge_inference_step(generated_seq_batch, x_batch)
+                
+                
+            self.merge_inference_batch(generated_seqs, generated_seq_batch)
+            
+        return generated_seqs
+                
+                
         
 
 #%%
