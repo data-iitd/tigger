@@ -500,7 +500,7 @@ class InductiveController:
             if i not in has_ended:  # no end node has been generated earlier
                 if end_id != end_node_id:
                     start_id = x_batch['node_id'][i]
-                    edge_attr = new_x_batch['edge_attr'][i].tolist()
+                    edge_attr = new_x_batch['edge_attr'][i][0].tolist()
                     edges.append((start_id, end_id, edge_attr))
                 else:
                     has_ended.append(i)

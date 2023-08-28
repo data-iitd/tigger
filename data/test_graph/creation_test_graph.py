@@ -76,6 +76,7 @@ importlib.reload(tigger_package.inductive_controller)
 # importlib.reload(tigger_package.edge_node_lstm)
 from tigger_package.inductive_controller import InductiveController
 
+
 if __name__ == "__main__":
     output_path = 'data/test_graph/'
     node_feature_path = output_path + 'test_node_attr.parquet'
@@ -99,17 +100,59 @@ if __name__ == "__main__":
     epoch_wise_loss, loss_dict = inductiveController.train_model()
 
 # %%
+
+
 generated_nodes = pd.read_parquet("data/test_graph/synth_nodes.parquet")
 print(f"there are {generated_nodes.shape[0]} nodes generated")
-res = inductiveController. create_synthetic_walks(generated_nodes, 2)
+gen_edges = inductiveController. create_synthetic_walks(generated_nodes, 2)
+pickle.dump(gen_edges, open("data/test_graph/generated_edges.pickle", "wb"))
 print(f"there are {generated_nodes.shape[0]} nodes after edge generation")
 
 #%%
+import tigger_package.graph_generator
+importlib.reload(tigger_package.graph_generator)
+from tigger_package.graph_generator import GraphGenerator
 
-    """
-    1) from the flownet sample N' time a node embedding including node attributes.
-    2) determine the corresponding cluster_id.
-    3) Feed to the forward loop edge attribute = 0-array, cluster_id, ne, na
-    4) read new edge attr, node attr, node emb and cluster id.
-    
-    """
+graph_generator = GraphGenerator(
+    results_dir = 'data/test_graph/results' , 
+    node_cols = inductiveController.node_features.columns, 
+    edge_cols = inductiveController.edge_attr_cols
+)
+
+generated_nodes, gen_edges = graph_generator.load_edges_and_nodes(
+    node_path = "data/test_graph/synth_nodes.parquet",
+    edge_path = "data/test_graph/generated_edges.pickle"
+)
+res = graph_generator.generate_graph(
+    nodes=generated_nodes,
+    edges=gen_edges,
+    target_edge_count=len(inductiveController.data)
+)
+
+#%%
+import tigger_package.orchestrator
+
+import importlib
+importlib.reload(tigger_package.orchestrator)
+from tigger_package.orchestrator import Orchestrator
+
+import tigger_package.flownet
+importlib.reload(tigger_package.flownet)
+from tigger_package.flownet import FlowNet
+
+# embed_path = 'data/test_graph/test_embedding.pickle'
+# nodes_path =  'data/test_graph/test_node_attr.parquet'
+config_path = 'data/test_graph/'
+orchestrator = Orchestrator(config_path)
+
+node = orchestrator.load_nodes()
+embed = orchestrator.load_normalized_embed()
+x_data =  embed.join(node, how='inner')
+x_data = x_data.drop('id', axis =1)
+name, history = orchestrator.train_flow()
+orchestrator.sample_flownet()
+res = orchestrator.lin_grid_search_flownet({"earning_rate": [0.001, 0.0001]})
+print("hoi")
+# %%
+
+# %%
