@@ -50,12 +50,12 @@ class Orchestrator():
     def lin_grid_search_flownet(self, grid_dict):
         node = self.load_nodes()
         embed = self.load_normalized_embed()
-        if not self.flownet
+        if not self.flownet:
             self.flownet = FlowNet(
                 config_path=self.config_path,
                 config_dict=self.config['flownet'])
-        self.flownet.lin_grid_search(self, grid_dict, embed, node)
-        
+        res = self.flownet.lin_grid_search(grid_dict, embed, node)
+        return res
         
     
             

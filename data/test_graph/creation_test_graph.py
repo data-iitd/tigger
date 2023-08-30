@@ -149,10 +149,24 @@ node = orchestrator.load_nodes()
 embed = orchestrator.load_normalized_embed()
 x_data =  embed.join(node, how='inner')
 x_data = x_data.drop('id', axis =1)
-name, history = orchestrator.train_flow()
-orchestrator.sample_flownet()
-res = orchestrator.lin_grid_search_flownet({"earning_rate": [0.001, 0.0001]})
+# name, history = orchestrator.train_flow()
+# orchestrator.sample_flownet()
+res = orchestrator.lin_grid_search_flownet({"learning_rate": [0.001, 0.0001]})
 print("hoi")
 # %%
+import matplotlib.pyplot as plt
+losses = []
+val_losses = []
+for k, v in res.items():
+    losses.append(v['loss'])
+    val_losses.append(v['val_loss'])
 
+fig, (ax1, ax2) = plt.subplots(1, 2)
+keys = [str(k) for k in res.keys()]
+ax1.bar(keys, losses, label='loss')
+ax1.bar(keys, val_losses, label='val_loss')
+for k, v in res.items():
+    ax2.plot(v['hist']['val_loss'], label=str(k))
+ax2.legend()
+fig.show()
 # %%

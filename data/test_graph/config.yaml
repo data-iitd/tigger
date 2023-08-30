@@ -8,7 +8,7 @@ flownet:
   hidden_units: [32,32]
   number_of_bijectors: 6
   # training params
-  epoch: 53
+  epoch: 20
   learning_rate: 0.0001
   batch_size: 1024 
 

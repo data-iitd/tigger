@@ -150,22 +150,44 @@ class FlowNet():
         self.model.set_weights(weights)
         
     def lin_grid_search(self, grid_dict, embed, node_attr):
-        dim = grid_dict.keys()[0]
+        dim = list(grid_dict.keys())[0]
         vals = grid_dict[dim]
         res = {}
         
         for val in vals:
             self.model = None
             setattr(self, dim, val)
-            name, hist = self.train(self, embed, node_attr)
+            name, hist = self.train(embed, node_attr)
             run = {
                 'name': name,
-                'hist': hist,
+                'hist': hist.history,
                 'dim': dim,
-                'val': val
+                'val': val,
+                "loss": np.mean(hist.history['loss'][-4:]),
+                "val_loss": np.mean(hist.history['val_loss'][-4:]),
             }
             res[val]=run
+            
+        if self.verbose>=2:
+            self.plot_grid(res)
         return res
+    
+    def plot_grid(self, res):
+        losses = []
+        val_losses = []
+        for k, v in res.items():
+            losses.append(v['loss'])
+            val_losses.append(v['val_loss'])
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        keys = [str(k) for k in res.keys()]
+        ax1.bar(keys, losses, label='loss')
+        ax1.bar(keys, val_losses, label='val_loss')
+        for k, v in res.items():
+            ax2.plot(v['hist']['val_loss'], label=str(k))
+        ax2.legend()
+        print(f"loss: {losses}")
+        print(f"val loss: {val_losses}")
             
         
         
