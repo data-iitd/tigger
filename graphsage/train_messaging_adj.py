@@ -117,3 +117,12 @@ if __name__ == "__main__":
     train_metrics = train_and_calculate_graphsage_embedding({**init_dict1, **init_dict2}, train_dict)
     print_metrics(train_metrics)
     # %%
+
+
+def embedding_to_pandas(embedding, node_to_id):
+    """calculates the node embedding and adds them in pandas df with original ID"""
+    df = pd.DataFrame(embedding)
+    ids = dict((v,k) for k,v in node_to_id.items())
+    id_df = pd.DataFrame.from_dict(ids, orient='index', column='id')
+    embed_df = id_df.join(df, how='outer')
+    return embed_df

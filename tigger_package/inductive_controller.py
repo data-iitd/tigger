@@ -350,8 +350,8 @@ class InductiveController:
                 
             # split in x and y
             if k == 'x_length':
-                x_batch[k] = torch_seq
-                y_batch[k] = torch_seq
+                x_batch[k] = torch_seq.to('cpu')
+                y_batch[k] = torch_seq.to('cpu')
             else:
                 x_batch[k] = torch_seq[:, :-1] 
                 y_batch[k] = torch_seq[:, 1:] 
