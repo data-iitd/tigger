@@ -1,6 +1,7 @@
 import os
 import re
 import pickle
+import warnings
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
@@ -27,7 +28,7 @@ class FlowNet():
         self.trainable_distribution = None
 
         
-        os.makedirs(config_path, exist_ok=True)
+        os.makedirs(self.config_path, exist_ok=True)
         
     def make_masked_autoregressive_flow(self):
         made = tfb.AutoregressiveNetwork(hidden_units=self.hidden_units, 
@@ -43,7 +44,7 @@ class FlowNet():
         bijectors = []
         for i in range(self.number_of_bijectors):
             bijectors.append(self.make_masked_autoregressive_flow())
-            permutation = list(range(19))
+            permutation = list(range(self.event_dim))
             if i%2 != 0:
                 permutation.reverse()
             bijectors.append(tfb.Permute(permutation=permutation))
@@ -104,19 +105,20 @@ class FlowNet():
             plt.plot(history.history['loss'], label='train')
             plt.plot(history.history['val_loss'], label='val')
             plt.legend()
-            plt.yscale("log")
+            # plt.yscale("log")
             plt.title("loss of flownet")
             plt.show()        
             
         return (name, history)
         
     def prep_data(self, embed, node_attr):
+        
         x_data = embed.join(node_attr, how='inner')
-        x_data = x_data.drop('id', axis =1)
         self.event_dim = x_data.shape[1]
         
         assert embed.shape[0] == x_data.shape[0]
-        assert node_attr.shape[0] == x_data.shape[0] 
+        if node_attr.shape[0] != x_data.shape[0]:
+            warnings.warn("not all nodes are included! are there nodes without edges?")
         
         return x_data
     

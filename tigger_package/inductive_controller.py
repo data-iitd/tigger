@@ -2,6 +2,7 @@
 import os
 import pickle
 import random
+import warnings
 import pandas as pd
 from datetime import datetime
 from collections import defaultdict,Counter
@@ -28,48 +29,56 @@ print("loaded")
 #%%
 ## !! vocab and node id is mixed, need to merge them
 class InductiveController:
-    def __init__(self, node_feature_path, edge_list_path, graphsage_embeddings_path,
-                 num_epochs = 10, num_clusters = 500, window_interactions = 6,
-                 n_walks=20000, l_w = 20, minimum_walk_length = 2, verbose=2,
-                 pca_components=3, config_path = "temp/", lr=.001, batch_size = 1024,
-                 kl_weight = 0.00001):
-        self.feature_path = node_feature_path  # dataframe path with node feature attributes
-        self.edge_list_path = edge_list_path  # dataframe with edge lists incl features
-        self.graphsage_embeddings_path = graphsage_embeddings_path
-        self.config_dir = self.prep_config_dir(config_path)
+    def __init__(self, nodes, edges, embed, path, config_dict):
+        for key, val in config_dict.items():
+            setattr(self, key, val)
+                 
+        self.config_dir = path + config_dict['config_path']  
+        os.makedirs(self.config_dir, exist_ok=True)
+        self.model_dir = self.config_dir + "models/"
+        os.makedirs(self.model_dir, exist_ok=True)
+                 
+                #  node_feature_path, edge_list_path, graphsage_embeddings_path,
+                #  num_epochs = 10, num_clusters = 500, window_interactions = 6,
+                #  n_walks=20000, l_w = 20, minimum_walk_length = 2, verbose=2,
+                #  pca_components=3, config_path = "temp/", lr=.001, batch_size = 1024,
+                #  kl_weight = 0.00001):
+        
+        # self.feature_path = node_feature_path  # dataframe path with node feature attributes
+        # self.edge_list_path = edge_list_path  # dataframe with edge lists incl features
+        # self.graphsage_embeddings_path = graphsage_embeddings_path
+        # self.config_dir = self.prep_config_dir(self.config_path)
         self.gpu_num = -1
-        self.config_path = "temp/"
-        self.num_epochs = num_epochs
-        self.num_clusters = num_clusters
-        self.pca_components = pca_components  # no of pca dimensions used for clustering
-        self.window_interactions = window_interactions  # ??
-        self.n_walks = n_walks  # number of walks samples
-        self.l_w = l_w  # maximum length of a walk
-        self.minimum_walk_length = minimum_walk_length
-        self.verbose = verbose
-        self.lr = lr  # learning rate
-        self.batch_size = batch_size
-        self.kl_weight = kl_weight
+        # self.config_path = "temp/"
+        # self.num_epochs = num_epochs
+        # self.num_clusters = num_clusters
+        # self.pca_components = pca_components  # no of pca dimensions used for clustering
+        # self.window_interactions = window_interactions  # ??
+        # self.n_walks = n_walks  # number of walks samples
+        # self.l_w = l_w  # maximum length of a walk
+        # self.minimum_walk_length = minimum_walk_length
+        # self.verbose = verbose
+        # self.lr = lr  # learning rate
+        # self.batch_size = batch_size
+        # self.kl_weight = kl_weight
         self.device = self.get_device()
         random.seed(1)
 
         #prep data
-        self.data = pd.read_parquet(edge_list_path)  # edge list
+        self.data = edges
         self.edge_attr_cols = [c for c in self.data.columns if c not in ['start', 'end']]
         self.edges, self.node_id_to_object = self.create_node_and_edge_objects_with_links_lists()
         self.vocab = self.create_lstm_vocab()
-        self.node_features = self.create_feature_matrix_from_pandas(self.feature_path)
+        self.node_features = self.create_feature_matrix_from_pandas(nodes)
         
-        self.node_embedding_matrix, self.normalized_dataset = self.create_node_embedding_matrix_from_dict()
+        self.node_embedding_matrix, self.normalized_dataset = self.create_node_embedding_matrix_from_dict(embed)
         self.cluster_labels, self.kmeans, self.pca = self.reduce_embedding_dim_and_cluster()
         self.define_sample_with_prob_per_edge()
         
         #prep model
         self.model, self.optimizer = self.initialize_model()
     
-        
-    
-        if verbose >=2:
+        if self.verbose >=2:
             print(f"number of edges in data file {self.data.shape[0]}")
             print(f"attributes found for edges: {self.edge_attr_cols}")
             print(f"length of edges {len(self.edges)} length of nodes {len(self.node_id_to_object)}")
@@ -195,10 +204,10 @@ class InductiveController:
                 ct += 1
         return random_walk if len(random_walk) >= self.minimum_walk_length else None
        
-    def create_node_embedding_matrix_from_dict(self):
+    def create_node_embedding_matrix_from_dict(self, embed):
         """create a numpy matrix of the node embedding order by vocab"""
-        node_embeddings_feature = pickle.load(open(self.graphsage_embeddings_path,"rb"))
-        node_emb_size = node_embeddings_feature[0].shape[0]
+        # node_embeddings_feature = pickle.load(open(self.graphsage_embeddings_path,"rb"))
+        node_emb_size = embed.shape[1]
         
         node_embedding_matrix = np.zeros((len(self.vocab),node_emb_size))
         for item in self.vocab:
@@ -207,7 +216,7 @@ class InductiveController:
             elif item == 'end_node':
                 arr = np.ones(node_emb_size)
             else:
-                arr = node_embeddings_feature[item]
+                arr = embed.loc[item,:].values
             index = self.vocab[item]
             node_embedding_matrix[index] = arr
        
@@ -222,22 +231,22 @@ class InductiveController:
         
         return (node_embedding_matrix, normalized_dataset)  
     
-    def create_feature_matrix_from_pandas(self, parquet_filename):
-        feat_df = pd.read_parquet(parquet_filename)  #has id column with node number
+    def create_feature_matrix_from_pandas(self, nodes):
+        nodes  #has id as index with node number
         node_attr = (
             pd.DataFrame
             .from_dict(self.vocab, orient='index', columns=['vocab_id'], dtype='int64')
-            .reset_index(names='id')
-            .merge(feat_df, on='id', how='outer')
+            # .reset_index(names='id')
+            .merge(nodes, how='left', left_index=True, right_index=True)
             .fillna(0) 
             .set_index('vocab_id')   
-            .drop('id', axis=1)        
+            # .drop('id', axis=1)        
         )
         node_attr.iloc[self.vocab['end_node']]=1
         
         #check if all rows of the feature are mapped to the vocab
-        assert feat_df.shape[0] + 2 == node_attr.shape[0], \
-            "feat df has {feat_df.shape[0]} rows and vocab has {vocab_df.shape[0]} instead of {feat_df.shape[0] + 2}"
+        if nodes.shape[0] + 2 != node_attr.shape[0]:
+            warnings.warn("feat df has {feat_df.shape[0]} rows and vocab has {vocab_df.shape[0]} instead of {feat_df.shape[0] + 2}. This can be cause by unconnected nodes.")
             
         return node_attr
         
@@ -457,7 +466,7 @@ class InductiveController:
             'optimizer': self.optimizer.state_dict(),
             'loss': running_loss
         }
-        torch.save(state, self.config_dir+"/models/best_model.pth".format(str(epoch)))
+        torch.save(state, self.model_dir+"/best_model.pth".format(str(epoch)))
         
         return (epoch_wise_loss, loss_dict)
     

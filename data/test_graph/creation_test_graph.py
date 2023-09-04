@@ -145,7 +145,7 @@ from tigger_package.flownet import FlowNet
 config_path = 'data/test_graph/'
 orchestrator = Orchestrator(config_path)
 
-node = orchestrator.load_nodes()
+node = orchestrator._load_nodes()
 embed = orchestrator.load_normalized_embed()
 x_data =  embed.join(node, how='inner')
 x_data = x_data.drop('id', axis =1)
