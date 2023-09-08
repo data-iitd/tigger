@@ -36,18 +36,21 @@ graphsage:
   dropout: 0.2
 
 lstm:
-  n_walks: 20
-  batch_size: 6
+  n_walks: 150
+  test_n_walks: 100
+  batch_size: 50
   num_clusters: 5
   l_w: 6
-  num_epochs: 10
-  window_interactions: 6
+  num_epochs: 1000
   minimum_walk_length: 2
-  verbose: 2
+  verbose: 1
   pca_components: 4
   config_path: "lstm_model/"
   lr: 0.001
   kl_weight: 0.00001
+  dropout: 0.1
+  nb_lstm_layers: 1
+  weight_decay: 0.001
 
 
   

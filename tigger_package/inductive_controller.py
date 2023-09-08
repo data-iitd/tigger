@@ -1,6 +1,7 @@
 #%%
 import os
 import pickle
+import importlib
 import random
 import warnings
 import pandas as pd
@@ -18,6 +19,8 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.cluster import KMeans
 from sklearn.neighbors import BallTree
+import tigger_package.edge_node_lstm
+importlib.reload(tigger_package.edge_node_lstm)
 from tigger_package.edge_node_lstm import EdgeNodeLSTM
 try:
     import matplotlib.pyplot as plt
@@ -37,30 +40,8 @@ class InductiveController:
         os.makedirs(self.config_dir, exist_ok=True)
         self.model_dir = self.config_dir + "models/"
         os.makedirs(self.model_dir, exist_ok=True)
-                 
-                #  node_feature_path, edge_list_path, graphsage_embeddings_path,
-                #  num_epochs = 10, num_clusters = 500, window_interactions = 6,
-                #  n_walks=20000, l_w = 20, minimum_walk_length = 2, verbose=2,
-                #  pca_components=3, config_path = "temp/", lr=.001, batch_size = 1024,
-                #  kl_weight = 0.00001):
-        
-        # self.feature_path = node_feature_path  # dataframe path with node feature attributes
-        # self.edge_list_path = edge_list_path  # dataframe with edge lists incl features
-        # self.graphsage_embeddings_path = graphsage_embeddings_path
-        # self.config_dir = self.prep_config_dir(self.config_path)
+                
         self.gpu_num = -1
-        # self.config_path = "temp/"
-        # self.num_epochs = num_epochs
-        # self.num_clusters = num_clusters
-        # self.pca_components = pca_components  # no of pca dimensions used for clustering
-        # self.window_interactions = window_interactions  # ??
-        # self.n_walks = n_walks  # number of walks samples
-        # self.l_w = l_w  # maximum length of a walk
-        # self.minimum_walk_length = minimum_walk_length
-        # self.verbose = verbose
-        # self.lr = lr  # learning rate
-        # self.batch_size = batch_size
-        # self.kl_weight = kl_weight
         self.device = self.get_device()
         random.seed(1)
 
@@ -147,12 +128,13 @@ class InductiveController:
                   
         return vocab
         
-    def sample_random_Walks(self):
+    def sample_random_Walks(self, train=True):
         """Create n_walk number of random walks"""
         if self.verbose >= 2:
             print(f"Running Random Walk on {len(self.edges)} edges")
         random_walks = []
-        for edge in tqdm(random.sample(self.edges, self.n_walks)):
+        n_walks = self.n_walks if train else self.test_n_walks
+        for edge in tqdm(random.sample(self.edges, n_walks)):
             rw = self.run_random_walk(edge)
             if rw is not None:
                 random_walks.append(rw)
@@ -385,7 +367,7 @@ class InductiveController:
         elstm = EdgeNodeLSTM(
             vocab=self.vocab, 
             gnn_dim=embed_dim,
-            nb_layers=2, 
+            nb_layers=self.nb_lstm_layers, 
             nb_lstm_units=128,
             edge_attr_dim=edge_dim,
             node_attr_dim=node_attr_dim,
@@ -393,11 +375,12 @@ class InductiveController:
             batch_size=self.batch_size,
             device=self.device,
             kl_weight=self.kl_weight,
-            num_components=self.num_clusters + 2  #incl padding + end cluster
+            num_components=self.num_clusters + 2,  #incl padding + end cluster
+            dropout = self.dropout
         )
         elstm = elstm.to(self.device)
         
-        optimizer = optim.Adam(elstm.parameters(), lr=.001)
+        optimizer = optim.Adam(elstm.parameters(), lr=.001, weight_decay=self.weight_decay)
         
         if self.verbose >= 2:
             num_params = sum(p.numel() for p in elstm.parameters() if p.requires_grad)
@@ -406,8 +389,13 @@ class InductiveController:
     
     def train_model(self):
         epoch_wise_loss = []
+        running_loss = 0 
+        val_loss_epoch = 0
         seqs = self.sample_random_Walks()
         seqs = self.get_X_Y_from_sequences(seqs)
+        
+        test_seqs = self.sample_random_Walks(train=False)
+        test_seqs = self.get_X_Y_from_sequences(test_seqs)
         
         loss_dict = {
                 'loss': [],
@@ -418,19 +406,17 @@ class InductiveController:
                 'kl_loss': [],
                 'cross_entropy_cluster': []
             }
+        val_loss = []
            
         for epoch in range(self.num_epochs):
             self.model.train()
-            seqs = self.data_shuffle(seqs)
-            n_seqs = len(seqs['x_length'])
+            seqs = self.data_shuffle(seqs)  # shuffle data
+            n_seqs = len(seqs['x_length'])  # number of walks
             
-            for start_index in range(0, n_seqs-self.batch_size, self.batch_size):              
-                print("\r%d/%d" %(int(start_index),n_seqs),end="")
-                wt_update_ct = 0
+            for start_index in range(0, n_seqs-self.batch_size+1, self.batch_size):              
+                batch_cnt = 0  # Batch number in Epoch
                 x_batch, y_batch = self.get_batch(start_index, self.batch_size, seqs)
                 self.model.zero_grad()
-                # mask_distribution = (pad_seqs['cluster_id'][:, 1:]!=0)
-                # mask_distribution = mask_distribution.to(self.device)
                 
                 # forward + backward pas
                 y_hat= self.model(**x_batch)
@@ -442,22 +428,23 @@ class InductiveController:
                 for k in loss_dict.keys():
                     loss_dict[k].append(log_dict[k])
     
-                wt_update_ct += 1
-                if self.verbose>=2 and wt_update_ct%10 == 0:
-                    for k,v in loss_dict.items():
-                        print(f"{k} = {np.mean(v[-wt_update_ct:])}")
+                batch_cnt += 1
+                
+                print(f"\r {int(start_index)} / {n_seqs}, epoch:{epoch} loss={running_loss}, val_loss: {val_loss_epoch}",end="")
      
-            running_loss = np.mean(loss_dict['loss'][-wt_update_ct:])
+            running_loss = np.mean(loss_dict['loss'][-batch_cnt:])
             epoch_wise_loss.append(running_loss)
             
-            if self.verbose>=1:
+            if self.verbose>=3:
                 print(f"\r\rEpoch {epoch} done \r")
                 for k,v in loss_dict.items():
-                        print(f"{k} = {np.mean(v[-wt_update_ct:])}")
+                        print(f"{k} = {np.mean(v[-batch_cnt:])}")
             
-            if epoch%20 == 0:
-                print("Running evaluation")
-                # evaluate_model(elstm)
+            if epoch%5 == 0:
+                val_loss_epoch = self.evaluate_model(test_seqs)
+                val_loss.append(val_loss_epoch)
+            
+            print(f"\r {int(start_index)} / {n_seqs}, epoch:{epoch} loss={running_loss}, val_loss: {val_loss_epoch}",end="")
             
         
         ### Saving the model
@@ -467,8 +454,80 @@ class InductiveController:
             'loss': running_loss
         }
         torch.save(state, self.model_dir+"/best_model.pth".format(str(epoch)))
+        loss_dict['epoch_loss'] = epoch_wise_loss
+        loss_dict['val_loss'] = val_loss
         
-        return (epoch_wise_loss, loss_dict)
+        if self.verbose>=1:
+            self.plot_loss(loss_dict)
+        
+        return (loss_dict)
+    
+    def evaluate_model(self, test_seqs):
+        """calculates the test loss over the complete epoch"""
+        self.model.eval()
+        epoch_wise_loss = []
+        n_seqs = len(test_seqs['x_length'])  # number of walks
+        for start_index in range(0, n_seqs-self.batch_size+1, self.batch_size):
+            print("\r%d/%d" %(int(start_index),n_seqs),end="")
+            batch_cnt = 0  # Batch number in Epoch
+            x_batch, y_batch = self.get_batch(start_index, self.batch_size, test_seqs)
+                
+            # forward + backward pas
+            y_hat= self.model(**x_batch)
+            _, log_dict = self.model.train_los(**y_hat, **y_batch)
+                
+            batch_cnt += 1
+            epoch_wise_loss.append(log_dict['loss'])
+            
+        return np.mean(epoch_wise_loss)  
+            
+    
+    def lin_grid_search(self, grid_dict):
+        grid_param = list(grid_dict.keys())[0]
+        vals = grid_dict[grid_param]
+        res = {}
+        
+        for val in vals:
+            setattr(self, grid_param, val)
+            self.model, self.optimizer = self.initialize_model()
+            loss_dict = self.train_model()
+            run = {
+                'grid_param': grid_param,
+                'val': val,
+            }
+            res[val]={**run, **loss_dict}
+            
+        if self.verbose>=1:
+            self.plot_grid(res)
+        return res
+    
+    def plot_grid(self, res):
+        losses = []
+        val_losses = []
+        for k, v in res.items():
+            losses.append(v['epoch_loss'][-1])
+            val_losses.append(v['val_loss'][-1])
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        keys = [str(k) for k in res.keys()]
+        ind = np.arange(len(keys))
+        width = 0.2
+        ax1.bar(ind-width, losses, 2*width, label='loss')
+        ax1.bar(ind+width, val_losses, 2*width, label='val_loss')
+        ax1.set_xticklabels(keys)
+        ax1.legend()
+        for k, v in res.items():
+            ax2.plot(v['val_loss'], label=str(k))
+        ax2.legend()
+        print(f"loss: {losses}")
+        print(f"val loss: {val_losses}")
+        plt.show()
+        
+    def plot_loss(self, loss_dict):
+        plt.plot(loss_dict['epoch_loss'], label='loss')
+        plt.plot(loss_dict['val_loss'], label='val_loss')
+        plt.legend()
+        plt.show()
     
     def embed_to_cluster(self, embed):
         embed_reduced = self.pca.transform(embed)

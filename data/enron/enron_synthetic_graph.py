@@ -72,6 +72,16 @@ enron_folder = "data/enron/"
 orchestrator = Orchestrator(enron_folder)
 name, history = orchestrator.train_flow()
 orchestrator.sample_flownet(name='sampled_flownet')
+# %% gridsearch lstm
+
+import importlib
+import tigger_package.orchestrator
+importlib.reload(tigger_package.orchestrator)
+from tigger_package.orchestrator import Orchestrator
+
+enron_folder = "data/enron/"
+orchestrator = Orchestrator(enron_folder)
+res = orchestrator.lin_grid_search_lstm({'weight_decay': [0.01, 0.001, 0.0001]})
 # %% train lstm
 
 import importlib
@@ -81,5 +91,4 @@ from tigger_package.orchestrator import Orchestrator
 
 enron_folder = "data/enron/"
 orchestrator = Orchestrator(enron_folder)
-epoch_wise_loss, loss_dict = orchestrator.train_lstm()
-# %%
+loss_dict = orchestrator.train_lstm()

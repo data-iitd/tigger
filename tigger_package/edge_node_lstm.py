@@ -7,7 +7,7 @@ import torch.nn as nn
 
 class EdgeNodeLSTM(nn.Module):
     def __init__(self, vocab, gnn_dim, nb_layers, num_components, edge_attr_dim, 
-                 node_attr_dim, nb_lstm_units=100, clust_dim=3, batch_size=3, kl_weight=0.001, device='cpu'):
+                 node_attr_dim, nb_lstm_units=100, clust_dim=3, batch_size=3, kl_weight=0.001, device='cpu', dropout=0):
         super(EdgeNodeLSTM, self).__init__()
         self.vocab = vocab
         self.nb_lstm_layers = nb_layers  # number of LSTM layers
@@ -22,6 +22,7 @@ class EdgeNodeLSTM(nn.Module):
         self.mu_hidden_dim = 100  # dimension between cluster embedding and z_gnn
         self.num_components = num_components  # number of clusters
         self.kl_weight = kl_weight
+        self.dropout = dropout
         print("Number of components,", num_components)
         
         # create cluster embedding
@@ -37,6 +38,7 @@ class EdgeNodeLSTM(nn.Module):
             hidden_size=self.nb_lstm_units,
             num_layers=self.nb_lstm_layers,
             batch_first=True,
+            dropout = self.dropout            
         )  
         
         # output layer which projects back to tag space
@@ -45,16 +47,25 @@ class EdgeNodeLSTM(nn.Module):
         self.clusterid_hidden = nn.Linear(200,self.num_components)  # Z_cluster to cluster distribution
         self.cluster_mu = nn.Linear(200,self.mu_hidden_dim*self.num_components)  # mu's per cluster
         self.cluster_var = nn.Linear(200,self.mu_hidden_dim*self.num_components) # var's per cluster
+        self.gnn_dropout1 = nn.Dropout(dropout)
         self.gnn_decoder1 = nn.Linear(self.mu_hidden_dim,400)  #layer 1 gnn_decoder
+        self.gnn_dropout2 = nn.Dropout(dropout)
         self.gnn_decoder2 = nn.Linear(400,self.gnn_dim)  # layer 2 gnn_decoder
+        self.gnn_dropout3 = nn.Dropout(dropout)
         self.gnn_decoder3 = nn.Linear(self.gnn_dim, self.gnn_dim)  # layer 3 gnn_decoder
         
+        self.edge_dropout1 = nn.Dropout(dropout)
         self.edge_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
+        self.edge_dropout2 = nn.Dropout(dropout)
         self.edge_decoder2 = nn.Linear(128,self.edge_attr_dim)  # layer 2 gnn_decoder
+        self.edge_dropout3 = nn.Dropout(dropout)
         self.edge_decoder3 = nn.Linear(self.edge_attr_dim, self.edge_attr_dim)  # layer 3 gnn_decoder
         
+        self.feat_dropout1 = nn.Dropout(dropout)
         self.feat_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
+        self.feat_dropout2 = nn.Dropout(dropout)
         self.feat_decoder2 = nn.Linear(128,self.node_attr_dim)  # layer 2 gnn_decoder
+        self.feat_dropout3 = nn.Dropout(dropout)
         self.feat_decoder3 = nn.Linear(self.node_attr_dim, self.node_attr_dim)  # layer 3 gnn_decoder
                 
         self.mse_los_gnn = nn.MSELoss(reduction='none')
@@ -164,15 +175,27 @@ class EdgeNodeLSTM(nn.Module):
         z = q.rsample()  # sample z for reconstruction of gnn embedding + edge atributes
         
         # Reconstruct gnn embedding
-        ne_hat = self.gnn_decoder2(self.relu_gnn(self.gnn_decoder1(z)))  # reconstruct  GNN embeding
+        ne_hat = self.gnn_dropout1(z)
+        ne_hat = self.relu_gnn(self.gnn_decoder1(ne_hat))  # reconstruct  GNN embeding
+        ne_hat = self.gnn_dropout2(ne_hat)
+        ne_hat = self.gnn_decoder2(ne_hat)
+        ne_hat = self.gnn_dropout3(ne_hat)
         ne_hat = self.gnn_decoder3(ne_hat)  #3de layer decoder gnn embedding
         
         # Reconstruct edge features
-        edge_attr_hat = self.edge_decoder2(self.relu_edge(self.edge_decoder1(z)))  # reconstruct  edge
+        edge_attr_hat = self.edge_dropout1(z)
+        edge_attr_hat = self.relu_edge(self.edge_decoder1(z))  # reconstruct  edge
+        edge_attr_hat = self.edge_dropout2(edge_attr_hat)
+        edge_attr_hat = self.edge_decoder2(edge_attr_hat)
+        edge_attr_hat = self.edge_dropout3(edge_attr_hat)
         edge_attr_hat = self.edge_decoder3(edge_attr_hat)  #3de layer decoder
         
         # Reconstruct node features
-        node_attr_hat = self.feat_decoder2(self.relu_feat(self.feat_decoder1(z)))  # reconstruct  edge
+        node_attr_hat = self.feat_dropout1(z)
+        node_attr_hat = self.relu_feat(self.feat_decoder1(z))  # reconstruct  edge
+        node_attr_hat = self.feat_dropout2(node_attr_hat)
+        node_attr_hat = self.feat_decoder2(node_attr_hat)
+        node_attr_hat = self.feat_dropout3(node_attr_hat)
         node_attr_hat = self.feat_decoder3(node_attr_hat)  #3de layer decoder
         
         mask = cluster_id!=0  #TODO check if mask is same as in loss
