@@ -36,12 +36,12 @@ graphsage:
   dropout: 0.2
 
 lstm:
-  n_walks: 150
+  n_walks: 300
   test_n_walks: 100
   batch_size: 50
   num_clusters: 5
   l_w: 6
-  num_epochs: 1000
+  num_epochs: 500
   minimum_walk_length: 2
   verbose: 1
   pca_components: 4
@@ -50,12 +50,15 @@ lstm:
   kl_weight: 0.00001
   dropout: 0.1
   nb_lstm_layers: 1
-  weight_decay: 0.001
+  weight_decay: 0.00001
 
 
   
 nodes_path: "enron_nodes.parquet"
 edges_path: "enron_edges.parquet"
 embed_path: "embed/embedding.parquet"
+synth_walks: "synth_walks.pickle"
+synth_nodes: "synth_nodes.parquet"
+synth_graph_dir: "synth_graph/"
 target_node_count: 100
   

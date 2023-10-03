@@ -89,8 +89,8 @@ class FlowNet():
         samples = self.trainable_distribution.sample(size)    
         sample_df = pd.DataFrame(samples)
         if not name:
-            name = "synth_nodes.parquet"
-        sample_df.to_parquet(self.config_path + name)
+            name = self.config_path + "synth_nodes.parquet"
+        sample_df.to_parquet(name)
         
     def train(self, embed, node_attr):
         x_data = self.prep_data(embed, node_attr)

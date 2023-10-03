@@ -7,11 +7,15 @@ import yaml
 import tigger_package.graphsage.graphsage_controller
 import tigger_package.flownet
 import tigger_package.inductive_controller
+import tigger_package.graph_generator
 
 import importlib
 importlib.reload(tigger_package.graphsage.graphsage_controller)
 importlib.reload(tigger_package.flownet)
 importlib.reload(tigger_package.inductive_controller)
+importlib.reload(tigger_package.graph_generator)
+
+from tigger_package.graph_generator import GraphGenerator
 from tigger_package.flownet import FlowNet
 from tigger_package.inductive_controller import InductiveController
 from tigger_package.graphsage.graphsage_controller import GraphSageController
@@ -35,7 +39,8 @@ class Orchestrator():
         name, hist = self.flownet.train(embed, node)
         return (name, hist)
     
-    def sample_flownet(self, name=None):
+    def sample_flownet(self):
+        name = self.config_path + self.config['synth_nodes']
         self.flownet.sample_model(self.config['target_node_count'], name)
         
     def lin_grid_search_flownet(self, grid_dict):
@@ -70,6 +75,12 @@ class Orchestrator():
         return res
           
     def train_lstm(self):
+        if not self.inductiveController:
+            self.init_lstm()
+        loss_dict = self.inductiveController.train_model()
+        return (loss_dict)
+    
+    def init_lstm(self):
         nodes = self._load_nodes()
         edges =  self._load_edges()
         embed = self._load_embed()
@@ -80,23 +91,35 @@ class Orchestrator():
             path=self.config_path,
             config_dict=self.config['lstm']
         )
-        epoch_wise_loss, loss_dict = self.inductiveController.train_model()
-        return (epoch_wise_loss, loss_dict)
        
     def lin_grid_search_lstm(self, grid_dict):
-        nodes = self._load_nodes()
-        edges =  self._load_edges()
-        embed = self._load_embed()
         if not self.inductiveController:
-            self.inductiveController = InductiveController(
-                nodes=nodes,
-                edges=edges,
-                embed=embed,
-                path=self.config_path,
-                config_dict=self.config['lstm']
-            )
+            self.init_lstm()
         res = self.inductiveController.lin_grid_search(grid_dict)
         return res 
+    
+    def create_synthetic_walks(self, target_cnt, synth_node_file_name=None):
+        generated_nodes = self._load_synthetic_nodes(synth_node_file_name)
+        self.synth_walks = self.inductiveController.create_synthetic_walks(generated_nodes, target_cnt=target_cnt)
+        pickle.dump(self.synth_walks, open(self.config_path + self.config['synth_walks'], "wb"))
+     
+    def generate_synth_graph(self):
+        results_dir = self.config_path + self.config['synth_graph_dir']
+        if not self.inductiveController:
+            self.init_lstm()            
+        
+        graph_generator = GraphGenerator(
+            results_dir = results_dir , 
+            node_cols = self.inductiveController.node_features.columns, 
+            edge_cols = self.inductiveController.edge_attr_cols
+        )
+        
+        graph_generator.generate_graph(
+            nodes=self._load_synthetic_nodes(),
+            edges=self._load_synth_walks(),
+            target_edge_count=len(self.inductiveController.data)
+        )
+           
                                                        
     # -- private methodes
     
@@ -135,10 +158,25 @@ class Orchestrator():
         
         return node_embedding_df
         
+    def _load_synthetic_nodes(self, name=None):
+        """loads the synth node embed_ + attrib from flownet"""
+        path = self.config_path + self.config['synth_nodes']
         
+        synth_nodes = pd.read_parquet(path)
+        return synth_nodes
     
-            
+    def _load_synth_walks(self):
+        path = self.config_path + self.config['synth_walks']
+        synth_walk = pickle.load(open(path, ("rb"))) 
+        return synth_walk   
+                
     
+    def _load_synthetic_graph_nodes(self, name=None):
+        path = self.config_path + self.config['synth_graph_dir'] + 'node_attributes.parquet'
+        return pd.read_parquet(path)
     
+    def _load_synth_graph_edges(self):
+        path = self.config_path + self.config['synth_graph_dir'] + 'adjacency.parquet'  
+        return pd.read_parquet(path)
     
         

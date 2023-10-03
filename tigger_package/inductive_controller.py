@@ -4,6 +4,7 @@ import pickle
 import importlib
 import random
 import warnings
+import math
 import pandas as pd
 from datetime import datetime
 from collections import defaultdict,Counter
@@ -320,7 +321,7 @@ class InductiveController:
                     padding_shape = (batch_size, self.l_w+1, dim)
                 else:
                     padding_shape = (batch_size, self.l_w+1)
-                pad_batch_seq[k] = np.ones(padding_shape, dtype=np.int32) * pad_value
+                pad_batch_seq[k] = np.ones(padding_shape, dtype=np.float64) * pad_value
                
         
         # join padding matrix with batch sequences
@@ -407,6 +408,7 @@ class InductiveController:
                 'cross_entropy_cluster': []
             }
         val_loss = []
+        val_dict_list = []
            
         for epoch in range(self.num_epochs):
             self.model.train()
@@ -441,7 +443,8 @@ class InductiveController:
                         print(f"{k} = {np.mean(v[-batch_cnt:])}")
             
             if epoch%5 == 0:
-                val_loss_epoch = self.evaluate_model(test_seqs)
+                val_loss_epoch, val_dict = self.evaluate_model(test_seqs)
+                val_dict_list.append(val_dict)
                 val_loss.append(val_loss_epoch)
             
             print(f"\r {int(start_index)} / {n_seqs}, epoch:{epoch} loss={running_loss}, val_loss: {val_loss_epoch}",end="")
@@ -456,6 +459,7 @@ class InductiveController:
         torch.save(state, self.model_dir+"/best_model.pth".format(str(epoch)))
         loss_dict['epoch_loss'] = epoch_wise_loss
         loss_dict['val_loss'] = val_loss
+        loss_dict['val_dict'] = self.mean_dict(val_dict_list, calc_mean=False)
         
         if self.verbose>=1:
             self.plot_loss(loss_dict)
@@ -466,6 +470,7 @@ class InductiveController:
         """calculates the test loss over the complete epoch"""
         self.model.eval()
         epoch_wise_loss = []
+        val_log_dicts = []
         n_seqs = len(test_seqs['x_length'])  # number of walks
         for start_index in range(0, n_seqs-self.batch_size+1, self.batch_size):
             print("\r%d/%d" %(int(start_index),n_seqs),end="")
@@ -478,8 +483,21 @@ class InductiveController:
                 
             batch_cnt += 1
             epoch_wise_loss.append(log_dict['loss'])
+            val_log_dicts.append(log_dict)
             
-        return np.mean(epoch_wise_loss)  
+            
+            
+        return (np.mean(epoch_wise_loss), self.mean_dict(val_log_dicts))
+              
+    def mean_dict(self, dict_list, calc_mean=True):
+        res = {}
+        
+        for k in dict_list[0].keys():
+            res[k] = [d[k] for d in dict_list]
+            if calc_mean:
+                res[k] = np.mean(res[k])
+                
+        return res
             
     
     def lin_grid_search(self, grid_dict):
@@ -524,9 +542,16 @@ class InductiveController:
         plt.show()
         
     def plot_loss(self, loss_dict):
-        plt.plot(loss_dict['epoch_loss'], label='loss')
-        plt.plot(loss_dict['val_loss'], label='val_loss')
-        plt.legend()
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        ax1.plot(loss_dict['epoch_loss'], label='loss')
+        ax1.plot(loss_dict['val_loss'], label='val_loss')
+        ax1.legend()
+        
+        val_losses = loss_dict['val_dict']
+        for k,v in val_losses.items():
+            ax2.plot(v, label=k)
+        ax2.legend(bbox_to_anchor=(1.5, 1.))
+        ax2.set_yscale("log")
         plt.show()
     
     def embed_to_cluster(self, embed):
@@ -634,8 +659,10 @@ class InductiveController:
             
         return x_batch
     
-    def create_synthetic_walks(self, synthetic_nodes, no_batches):
+    def create_synthetic_walks(self, synthetic_nodes, target_cnt):
         """create walks using the synthetics nodes as starting point"""
+        
+        no_batches = math.ceil(target_cnt / self.batch_size)
         
         self.model.eval()
         node_count = synthetic_nodes.shape[0]

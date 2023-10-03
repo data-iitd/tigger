@@ -233,7 +233,7 @@ class EdgeNodeLSTM(nn.Module):
         log_dict = {
             'loss': loss.item(),
             'elbo_loss': elbo.item(),
-            'kl_loss': (self.kl.sum()/num_events).item(),
+            'kl_loss': (self.kl.sum()/num_events*self.kl_weight).item(),
             'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),
             'reconstruction_edge': (recon_loss_edge_attr.sum()/num_events).item(),
             'cross_entropy_cluster': (loss_cluster.sum()/num_events).item(),
