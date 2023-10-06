@@ -43,7 +43,7 @@ class Encoder(nn.Module):
                 self.num_sample)
         #print(neigh_feats.shape)
         if not self.gcn:
-            self_feats = self.features(torch.LongTensor(nodes).to(self.device))
+            self_feats = self.features(torch.as_tensor(nodes).to(self.device))
             combined = torch.cat([self_feats, neigh_feats], dim=1).to(self.device)
         else:
             combined = neigh_feats

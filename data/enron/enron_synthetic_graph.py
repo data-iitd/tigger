@@ -65,13 +65,15 @@ import tigger_package
 
 
 #%% full run
+import tigger_package.metrics.distribution_metrics
+import tigger_package.orchestrator
 enron_folder = "data/enron/"
 orchestrator = Orchestrator(enron_folder)
 
-train_metrics = orchestrator.create_embedding()
+# train_metrics = orchestrator.create_embedding()
 
-name, history = orchestrator.train_flow()
-orchestrator.sample_flownet()
+# name, history = orchestrator.train_flow()
+# orchestrator.sample_flownet()
 
 loss_dict = orchestrator.train_lstm()
 orchestrator.create_synthetic_walks(target_cnt=2000, synth_node_file_name='sampled_flownet')

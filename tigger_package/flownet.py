@@ -70,7 +70,7 @@ class FlowNet():
         epoch_callback = LambdaCallback(
             on_epoch_end=lambda cur_epoch, logs: 
                             print('\n Epoch {}/{}'.format(cur_epoch+1, self.epoch, logs),
-                                '\n\t ' + (': {:.4f}, '.join(logs.keys()) + ': {:.4f}').format(*logs.values()))
+                                '\n\t ' + (': {:.4f}, '.join(logs.keys()) + ': {:.4f}').format(*logs.values()),end="")
                                         if cur_epoch % self.n_disp == 0 else False 
         )
 

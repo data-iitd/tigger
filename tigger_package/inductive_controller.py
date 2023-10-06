@@ -43,7 +43,7 @@ class InductiveController:
         os.makedirs(self.model_dir, exist_ok=True)
                 
         self.gpu_num = -1
-        self.device = self.get_device()
+        self.device = torch.device("cpu") #self.get_device()
         random.seed(1)
 
         #prep data
@@ -229,7 +229,7 @@ class InductiveController:
         
         #check if all rows of the feature are mapped to the vocab
         if nodes.shape[0] + 2 != node_attr.shape[0]:
-            warnings.warn("feat df has {feat_df.shape[0]} rows and vocab has {vocab_df.shape[0]} instead of {feat_df.shape[0] + 2}. This can be cause by unconnected nodes.")
+            warnings.warn(f"feat df has {nodes.shape[0]} rows and vocab has {node_attr.shape[0]} instead of {nodes.shape[0] + 2}. This can be cause by unconnected nodes.")
             
         return node_attr
         

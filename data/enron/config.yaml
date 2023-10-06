@@ -20,9 +20,9 @@ graphsage:
   embedding_dim: 4
   verbose_level: 2
    #20000  # epoch for training
-  training_epoch: 3000
+  training_epoch: 200
   #4000 # epoch per boosting run
-  boost_epoch: 4000
+  boost_epoch: 200
   #100 # number of boosting runs
   boost_times: 2
   # additional negative edges added as part of boosting

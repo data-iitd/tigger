@@ -19,3 +19,15 @@ pdf.to_parquet("data/bitcoin/feature_attributes.parquet")
 
 
 # %%
+import os
+import pickle
+import networkx as nx 
+os.chdir('../..')
+import torch
+
+cluster_id_hat = torch.load("data/enron/cluster_id_hat.pickle")
+cluster_id = torch.load("data/enron/cluster_id.pickle")
+# celoss_cluster = torch.nn.functional.cross_entropy(cluster_id_hat, cluster_id)
+celoss_cluster = torch.nn.CrossEntropyLoss()
+
+# %%

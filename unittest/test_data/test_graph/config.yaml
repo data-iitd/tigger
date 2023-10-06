@@ -1,0 +1,45 @@
+flownet:
+  overwrite: True
+  flownet_config_path: 'flowmodel/'
+
+  # model structure
+  event_dim: 19
+  activation: 'relu'
+  hidden_units: [32,32]
+  number_of_bijectors: 6
+  # training params
+  epoch: 20
+  learning_rate: 0.0001
+  batch_size: 1024 
+
+  # print freq of loss during training
+  n_disp: 50 
+  verbose: 2
+
+lstm:
+  n_walks: 10
+  test_n_walks: 10
+  batch_size: 6
+  num_clusters: 5
+  l_w: 6
+  num_epochs: 500
+  minimum_walk_length: 2
+  verbose: 1
+  pca_components: 4
+  config_path: "lstm_model/"
+  lr: 0.001
+  kl_weight: 0.00001
+  dropout: 0.1
+  nb_lstm_layers: 1
+  weight_decay: 0.00001
+  
+
+
+nodes_path: "test_node_attr.parquet"
+edges_path: "test_edge_list.parquet"
+embed_path: "test_embedding.pickle"
+
+synth_walks: "synth_walks.pickle"
+synth_nodes: "synth_nodes.parquet"
+synth_graph_dir: "synth_graph/"
+target_node_count: 100

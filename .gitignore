@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# outdated stuf
+old/
+
 # C extensions
 *.so
 ## Folders
