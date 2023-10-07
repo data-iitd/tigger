@@ -15,7 +15,7 @@ import numpy as np
 import copy
 import torch
 import torch.optim as optim
-from tgg_utils import prepare_sample_probs, Edge, Node
+from tigger_package.utils import prepare_sample_probs, Edge, Node
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from sklearn.cluster import KMeans

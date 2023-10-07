@@ -102,9 +102,11 @@ class EdgeDistributionMetrics:
         self.get_degrees_dist()
         ws_dist = {}
         for direction in ['in_degree', 'out_degree']:
+            df = pd.concat([self.edges_degree[direction], self.synth_edges_degree[direction]], axis=1)
+            df = df.fillna(0)
             ws = scipy.stats.wasserstein_distance(
-                self.edges_degree[direction],
-                self.synth_edges_degree[direction]
+                df.iloc[:,0],
+                df.iloc[:,1]
             )
             ws_dist[direction] = ws
             
@@ -169,7 +171,7 @@ class EdgeDistributionMetrics:
         df['delta'] = np.absolute(df['edges_frac'] - df['synth_edges_frac'])
         
         #plot results
-        plt.style.use('seaborn')
+        plt.style.use('seaborn-v0_8')
         fig, ax = plt.subplots(1, 1)
         
         x_axis = np.arange(df.shape[0])
@@ -177,8 +179,9 @@ class EdgeDistributionMetrics:
         ax.bar(x_axis - 0.2, df.edges_frac, width=0.4, label='orig', )
         ax.bar(x_axis + 0.2, df.synth_edges_frac, width=0.4, label='synth')
         ax.legend()
-        ax.set_xticklabels(df['Subgraph.1'], rotation= '90')
         ax.set_xticks(np.arange(0, df.shape[0]))
+        ax.set_xticklabels(df['Subgraph.1'], rotation=90)
+        
         
         fig.show()
 
@@ -188,7 +191,7 @@ class EdgeDistributionMetrics:
         """calculates the global clustering coef"""
         assert self.temp_dir is not None, "temp dir is not set"
         assert self.gtrie_dir is not None, "gtrie dir is not set"
-        dfs = {}
+        cc = {}
         names = ['edges', 'synth_edges']
         
         for name in names:
@@ -203,20 +206,19 @@ class EdgeDistributionMetrics:
                 if proc_res.returncode < 0:
                     raise Exception("Terminal process did not exit succesfully")
             
-            df = pd.read_html(f"{self.temp_dir}dir3_{name}.html")
+            df = pd.read_html(f"{self.temp_dir}undir3_{name}.html")
             df =df[0][['Subgraph.1', 'Org. Frequency']]
-            df[name+"_frac"] = df['Org. Frequency'] / df['Org. Frequency'].sum()
-            df = df.rename({'Org. Frequency': name+"_freq"}, axis=1)
-            dfs[name] = df
+            # df[name+"_frac"] = df['Org. Frequency'] / df['Org. Frequency'].sum()
+            # df = df.rename({'Org. Frequency': name+"_freq"}, axis=1)
             
-        df = dfs['edges'].merge(dfs['synth_edges'], on='Subgraph.1', how='outer')
-        traingles = df.loc[df['Subgraph.1']=='011 101 110']
-        degree_dict = self.get_undirected_degrees()
-        
-        cc_orig = traingles['edges_freq'] / np.sum([k*(k-1) for k in degree_dict['edges']]) 
-        
-        return cc_orig
-       
+            # calculate the cluster coef
+            triangles =  df.loc[df['Subgraph.1']=='011 101 110','Org. Frequency']
+            total = df['Org. Frequency'].sum() + 2 * triangles
+            cluster_coef = triangles * 3 / total
+
+            cc[name] = cluster_coef.to_numpy()[0]   
+        return cc
+
     def get_undirected_degrees(self):
         degree_dict = {}
         for edge_name, name_dict in [('edges', {"src": 'start', 'dst': 'end'}), ('synth_edges', {"src": 'src', 'dst': 'dst'})]:
@@ -240,10 +242,16 @@ class EdgeDistributionMetrics:
         df = getattr(self, name)
         if name == 'edges':
             df = df.rename({'start': 'src', 'end': 'dst'}, axis=1)
-            
+           
+        df = df[['src', 'dst']].copy()
         df['new_src'] = df['src'] + 1
         df['new_dst'] = df['dst'] + 1
+        df['weight'] = 1
         
-        df[['new_src', 'new_dst']].to_csv(input_file, header=False, index=False, sep=" ", compression=None)
+        # to_csv return a carriage return at the end which needs to be removed.
+        adj_str = df[['new_src', 'new_dst', 'weight']].to_csv(header=False, index=False, sep=" ", compression=None)[:-1]
+        
+        with open(input_file, "w") as text_file:
+            text_file.write(adj_str)
         return input_file
         

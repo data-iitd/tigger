@@ -84,7 +84,7 @@ orchestrator.generate_synth_graph()
 import pandas as pd
 adj_df = pd.read_parquet("data/enron/synth_graph/adjacency.parquet")
 plot_adj_matrix(adj_df)
-# %%
+# %% BASE
 
 import tigger_package.metrics.distribution_metrics
 import tigger_package.orchestrator
@@ -103,9 +103,13 @@ orchestrator = Orchestrator(enron_folder)
 # ndm.calculate_wasserstein_distance()
 # ndm.plot_hist()
 
+#%%% CLUSTERING
 
-edges = orchestrator._load_edges()
-synth_edges = orchestrator._load_synth_graph_edges()
+# edges = orchestrator._load_edges()
+# synth_edges = orchestrator._load_synth_graph_edges()
+import pandas as pd
+edges = pd.DataFrame([[1,2], [1,3], [1,4], [2,3], [2,4], [3,4]], columns=['start', 'end'])
+synth_edges = pd.DataFrame([[1,2], [1,3], [1,4], [2,3],[3,4] ], columns=['src', 'dst'])
 edm = EdgeDistributionMetrics(edges, synth_edges)
 # edm.calculate_wasserstein_distance()
 # edm.plot_hist()
@@ -116,8 +120,8 @@ edm = EdgeDistributionMetrics(edges, synth_edges)
 edm.gtrie_dir = '~/Downloads/gtrieScanner_src_01/'
 edm.temp_dir = 'temp/'
 # df, mean = edm.widgets_distr()
-df = edm.clustering_coef_undirected()
-df
+cc = edm.clustering_coef_undirected()
+print(cc)
 # %%
 import networkx as nx
 import numpy as np
