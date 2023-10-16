@@ -6,6 +6,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 from tensorflow.keras.layers import Input
 from tensorflow.keras import Model
 from tensorflow.keras.callbacks import LambdaCallback
@@ -58,7 +59,7 @@ class FlowNet():
         x_ = Input(shape=(self.event_dim,), dtype=tf.float32)
         log_prob_ = trainable_distribution.log_prob(x_)
         self.model = Model(x_, log_prob_)
-        self.model.compile(optimizer=tf.optimizers.Adam(learning_rate=self.learning_rate),
+        self.model.compile(optimizer=tf.optimizers.legacy.Adam(learning_rate=self.learning_rate),
                     loss=lambda _, log_prob: -log_prob)
     
   
@@ -68,10 +69,9 @@ class FlowNet():
 
         # Display the loss every n_disp epoch
         epoch_callback = LambdaCallback(
-            on_epoch_end=lambda cur_epoch, logs: 
-                            print('\n Epoch {}/{}'.format(cur_epoch+1, self.epoch, logs),
-                                '\n\t ' + (': {:.4f}, '.join(logs.keys()) + ': {:.4f}').format(*logs.values()),end="")
-                                        if cur_epoch % self.n_disp == 0 else False 
+            on_epoch_end=lambda cur_epoch, logs:
+                print(f'\rEpoch {cur_epoch+1}/{self.epoch}  {[str(k)+":"+str(v) for k,v in logs.items()]}', end="")
+                if cur_epoch % self.n_disp == 0 else False
         )
 
 

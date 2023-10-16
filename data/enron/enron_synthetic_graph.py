@@ -4,8 +4,8 @@
 #%%
 import os
 import pickle
-import networkx as nx 
-os.chdir('../..')
+import networkx as nx
+# os.chdir('../..')
 os.getcwd()
 from tigger_package.orchestrator import Orchestrator
 from tigger_package.tools import plot_adj_matrix
@@ -37,7 +37,7 @@ import tigger_package
 # epoch is based on overfitting on val_loss curve 
 
 # %% Final Model
-# train_metrics = orchestrator.create_embedding()
+train_metrics = orchestrator.create_embedding()
 
 #%% flownet grid
 
@@ -76,8 +76,8 @@ orchestrator = Orchestrator(enron_folder)
 # orchestrator.sample_flownet()
 
 loss_dict = orchestrator.train_lstm()
-orchestrator.create_synthetic_walks(target_cnt=2000, synth_node_file_name='sampled_flownet')
-orchestrator.generate_synth_graph()
+# orchestrator.create_synthetic_walks(target_cnt=2000, synth_node_file_name='sampled_flownet')
+# orchestrator.generate_synth_graph()
 
 
 # %%

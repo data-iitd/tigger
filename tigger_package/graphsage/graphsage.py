@@ -28,7 +28,7 @@ class GraphSAGE:
         self.dropout = dropout
         try: 
             if torch.backends.mps.is_available():
-                device = torch.device("mps")
+                device = torch.device("cpu")
         except:
             if torch.cuda.is_available():
                 device = torch.device("cuda")

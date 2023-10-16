@@ -1,13 +1,15 @@
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as nnf
 # current_file_directory = os.path.dirname(os.path.abspath(__file__))
 #sys.path.append(current_file_directory)
 
 
 class EdgeNodeLSTM(nn.Module):
-    def __init__(self, vocab, gnn_dim, nb_layers, num_components, edge_attr_dim, 
-                 node_attr_dim, nb_lstm_units=100, clust_dim=3, batch_size=3, kl_weight=0.001, device='cpu', dropout=0):
+    def __init__(self, vocab, gnn_dim, nb_layers, num_components, edge_attr_dim,
+                 node_attr_dim, nb_lstm_units=100, clust_dim=3, mu_hidden_dim=100,
+                 batch_size=3, kl_weight=0.001, device='cpu', dropout=0):
         super(EdgeNodeLSTM, self).__init__()
         self.vocab = vocab
         self.nb_lstm_layers = nb_layers  # number of LSTM layers
@@ -19,7 +21,7 @@ class EdgeNodeLSTM(nn.Module):
         # don't count the padding tag for the classifier output
         self.nb_events = len(self.vocab) - 1
         self.gnn_dim = gnn_dim
-        self.mu_hidden_dim = 100  # dimension between cluster embedding and z_gnn
+        self.mu_hidden_dim = mu_hidden_dim  # dimension between cluster embedding and z_gnn
         self.num_components = num_components  # number of clusters
         self.kl_weight = kl_weight
         self.dropout = dropout
@@ -47,24 +49,28 @@ class EdgeNodeLSTM(nn.Module):
         self.clusterid_hidden = nn.Linear(200,self.num_components)  # Z_cluster to cluster distribution
         self.cluster_mu = nn.Linear(200,self.mu_hidden_dim*self.num_components)  # mu's per cluster
         self.cluster_var = nn.Linear(200,self.mu_hidden_dim*self.num_components) # var's per cluster
+        
+        gnn_dim2 = int((self.mu_hidden_dim - self.gnn_dim) / 2 + self.mu_hidden_dim)
         self.gnn_dropout1 = nn.Dropout(dropout)
-        self.gnn_decoder1 = nn.Linear(self.mu_hidden_dim,400)  #layer 1 gnn_decoder
+        self.gnn_decoder1 = nn.Linear(self.mu_hidden_dim, gnn_dim2)  #layer 1 gnn_decoder
         self.gnn_dropout2 = nn.Dropout(dropout)
-        self.gnn_decoder2 = nn.Linear(400,self.gnn_dim)  # layer 2 gnn_decoder
+        self.gnn_decoder2 = nn.Linear(gnn_dim2, self.gnn_dim)  # layer 2 gnn_decoder
         self.gnn_dropout3 = nn.Dropout(dropout)
         self.gnn_decoder3 = nn.Linear(self.gnn_dim, self.gnn_dim)  # layer 3 gnn_decoder
         
+        edge_dim2 = int((self.mu_hidden_dim - self.edge_attr_dim) / 2 + self.mu_hidden_dim)
         self.edge_dropout1 = nn.Dropout(dropout)
-        self.edge_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
+        self.edge_decoder1 = nn.Linear(self.mu_hidden_dim, edge_dim2)  #layer 1 gnn_decoder
         self.edge_dropout2 = nn.Dropout(dropout)
-        self.edge_decoder2 = nn.Linear(128,self.edge_attr_dim)  # layer 2 gnn_decoder
+        self.edge_decoder2 = nn.Linear(edge_dim2, self.edge_attr_dim)  # layer 2 gnn_decoder
         self.edge_dropout3 = nn.Dropout(dropout)
         self.edge_decoder3 = nn.Linear(self.edge_attr_dim, self.edge_attr_dim)  # layer 3 gnn_decoder
         
+        node_dim2 = int((self.mu_hidden_dim - self.node_attr_dim) / 2 + self.mu_hidden_dim)
         self.feat_dropout1 = nn.Dropout(dropout)
-        self.feat_decoder1 = nn.Linear(self.mu_hidden_dim,128)  #layer 1 gnn_decoder
+        self.feat_decoder1 = nn.Linear(self.mu_hidden_dim, node_dim2)  #layer 1 gnn_decoder
         self.feat_dropout2 = nn.Dropout(dropout)
-        self.feat_decoder2 = nn.Linear(128,self.node_attr_dim)  # layer 2 gnn_decoder
+        self.feat_decoder2 = nn.Linear(node_dim2, self.node_attr_dim)  # layer 2 gnn_decoder
         self.feat_dropout3 = nn.Dropout(dropout)
         self.feat_decoder3 = nn.Linear(self.node_attr_dim, self.node_attr_dim)  # layer 3 gnn_decoder
                 
@@ -74,9 +80,6 @@ class EdgeNodeLSTM(nn.Module):
         self.celoss_cluster = nn.CrossEntropyLoss(ignore_index=0)
 
         self.relu_cluster = nn.LeakyReLU()  # activation forhidden to determin cluster id
-        self.relu_edge = nn.LeakyReLU()  #activation for reconstruction edge attributes
-        self.relu_feat = nn.LeakyReLU()
-        self.relu_gnn = nn.LeakyReLU() 
         
         self.device = device
         
@@ -114,16 +117,18 @@ class EdgeNodeLSTM(nn.Module):
         # the weights are of the form (nb_layers, batch_size, nb_lstm_units)
         hidden_a = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
         hidden_b = torch.zeros(self.nb_lstm_layers, self.batch_size, self.nb_lstm_units).to(self.device)
+        self.hidden = (hidden_a, hidden_b)
         return (hidden_a, hidden_b)
 
-    def forward(self, node_embed,    
+    def forward(self, node_embed,
                 node_attr,  
                 x_length, 
-                cluster_id):
+                cluster_id,
+                y_cluster_id=None):
         # reset the LSTM hidden state. Must be done before you run a new batch. Otherwise the LSTM will treat
         # a new batch as a continuation of a sequence
         if self.training:
-            self.hidden = self.init_hidden()           
+            self.init_hidden()           
         batch_size, seq_len, _ = node_embed.size()
         
         # ---------------------
@@ -149,24 +154,29 @@ class EdgeNodeLSTM(nn.Module):
         # ---------------------
         # Dim transformation: (batch_size, seq_len, nb_lstm_units) -> (batch_size * seq_len, nb_lstm_units)
 
-        # Predict cluster id props
-        Y_hat = self.relu_cluster(self.hidden_to_ne_hidden(X))  # Z_cluster
-        Y_clusterid = self.clusterid_hidden(Y_hat)  # prop distrubution over clusters.
+        # 2 FC MLPs to predict cluster id props
+        Y_hat = nnf.leaky_relu(self.hidden_to_ne_hidden(X))  # Z_cluster
+        cluster_logits = self.clusterid_hidden(Y_hat)  # prop logits distrubution over clusters.
     
-        #  get the mu and variance parameters voor retrieving GNN embedding
-        mu, log_var = self.cluster_mu(Y_hat), self.cluster_var(Y_hat)
-        mu = mu.view(batch_size,seq_len,self.num_components,self.mu_hidden_dim)
-        log_var = log_var.view((batch_size,seq_len,self.num_components,self.mu_hidden_dim))
-        
-        #YCID is expected to have size of batch_size*seq_len
+
+        # Sample next cluster id (cluster id hat)
         if self.training:  # select true cluster during training?
-            cluster_id_hat = cluster_id
+            cluster_id_hat = y_cluster_id
         else:
-            cluster_id_hat = torch.argmax(Y_clusterid,dim=2)
+            clust_dist = nnf.softmax(cluster_logits, dim=-1)
+            clust_dist = clust_dist.view(-1,cluster_logits.shape[-1])
+            cluster_id_hat = torch.multinomial(clust_dist, 1, replacement=True)
+            cluster_id_hat = cluster_id_hat.view(batch_size,seq_len)
             
-        Y_clusterid_sampled = cluster_id_hat.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)            
+        Y_clusterid_sampled = cluster_id_hat.unsqueeze(-1).repeat(1,1,self.mu_hidden_dim).unsqueeze(2)  
+                  
         # retrieve mu and log_var for y_cluster
+        mu = self.cluster_mu(Y_hat)
+        mu = mu.view(batch_size,seq_len,self.num_components,self.mu_hidden_dim)
         mu = torch.gather(mu,2,Y_clusterid_sampled).squeeze(2)
+        
+        log_var = self.cluster_var(Y_hat)
+        log_var = log_var.view((batch_size,seq_len,self.num_components,self.mu_hidden_dim))
         log_var = torch.gather(log_var,2,Y_clusterid_sampled).squeeze(2)
             
         
@@ -176,35 +186,34 @@ class EdgeNodeLSTM(nn.Module):
         
         # Reconstruct gnn embedding
         ne_hat = self.gnn_dropout1(z)
-        ne_hat = self.relu_gnn(self.gnn_decoder1(ne_hat))  # reconstruct  GNN embeding
+        ne_hat = nnf.leaky_relu(self.gnn_decoder1(ne_hat))  # reconstruct  GNN embeding
         ne_hat = self.gnn_dropout2(ne_hat)
-        ne_hat = self.gnn_decoder2(ne_hat)
+        ne_hat = nnf.leaky_relu(self.gnn_decoder2(ne_hat))
         ne_hat = self.gnn_dropout3(ne_hat)
         ne_hat = self.gnn_decoder3(ne_hat)  #3de layer decoder gnn embedding
         
         # Reconstruct edge features
         edge_attr_hat = self.edge_dropout1(z)
-        edge_attr_hat = self.relu_edge(self.edge_decoder1(z))  # reconstruct  edge
+        edge_attr_hat = nnf.leaky_relu(self.edge_decoder1(z))  # reconstruct  edge
         edge_attr_hat = self.edge_dropout2(edge_attr_hat)
-        edge_attr_hat = self.edge_decoder2(edge_attr_hat)
+        edge_attr_hat = nnf.leaky_relu(self.edge_decoder2(edge_attr_hat))
         edge_attr_hat = self.edge_dropout3(edge_attr_hat)
-        edge_attr_hat = self.edge_decoder3(edge_attr_hat)  #3de layer decoder
+        edge_attr_hat = nnf.leaky_relu(self.edge_decoder3(edge_attr_hat))  #3de layer decoder
         
         # Reconstruct node features
         node_attr_hat = self.feat_dropout1(z)
-        node_attr_hat = self.relu_feat(self.feat_decoder1(z))  # reconstruct  edge
+        node_attr_hat = nnf.leaky_relu(self.feat_decoder1(z))  # reconstruct  edge
         node_attr_hat = self.feat_dropout2(node_attr_hat)
-        node_attr_hat = self.feat_decoder2(node_attr_hat)
+        node_attr_hat = nnf.leaky_relu(self.feat_decoder2(node_attr_hat))
         node_attr_hat = self.feat_dropout3(node_attr_hat)
-        node_attr_hat = self.feat_decoder3(node_attr_hat)  #3de layer decoder
+        node_attr_hat = nnf.leaky_relu(self.feat_decoder3(node_attr_hat))  #3de layer decoder
         
         mask = cluster_id!=0  #TODO check if mask is same as in loss
-        if self.training:
-            self.kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
+        self.kl = self.kl_divergence(z, mu, std)*mask   # used for regularisation
         
         return {'node_embed_hat': ne_hat,
                 'edge_attr_hat': edge_attr_hat,
-                'cluster_id_hat_vector': Y_clusterid,
+                'cluster_id_hat_vector': cluster_logits,
                 'cluster_id_hat': cluster_id_hat,
                 'node_attr_hat': node_attr_hat,
                 }
@@ -222,10 +231,11 @@ class EdgeNodeLSTM(nn.Module):
         recon_loss_node_attr = recon_loss_node_attr.sum(-1)*mask
         elbo = self.kl_weight*self.kl + recon_loss_ne + recon_loss_edge_attr + recon_loss_node_attr  ### recon_loss 
         num_events = x_length.sum()
-        elbo = elbo.sum()/num_events
+        elbo = elbo.sum() / num_events
         
         #cluster loss
         cluster_id_hat_vector = cluster_id_hat_vector.view(-1, cluster_id_hat_vector.shape[-1])
+        # returns mean value!!!
         loss_cluster = self.celoss_cluster(cluster_id_hat_vector, cluster_id.reshape(-1))
         
         loss = elbo + loss_cluster
@@ -233,10 +243,10 @@ class EdgeNodeLSTM(nn.Module):
         log_dict = {
             'loss': loss.item(),
             'elbo_loss': elbo.item(),
-            'kl_loss': (self.kl.sum()/num_events*self.kl_weight).item(),
+            'kl_loss': (self.kl.sum()/ num_events*self.kl_weight).item(),
             'reconstruction_ne': (recon_loss_ne.sum()/num_events).item(),
             'reconstruction_edge': (recon_loss_edge_attr.sum()/num_events).item(),
-            'cross_entropy_cluster': (loss_cluster.sum()/num_events).item(),
+            'cross_entropy_cluster': loss_cluster.item(),
             'reconstruction_feat': (recon_loss_node_attr.sum()/num_events).item(),
         }      
         

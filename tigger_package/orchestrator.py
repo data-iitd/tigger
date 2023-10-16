@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import numpy as np
 import yaml
+import tensorflow as tf
 
 import tigger_package.graphsage.graphsage_controller
 import tigger_package.flownet
@@ -31,26 +32,33 @@ class Orchestrator():
         self.inductiveController = None
     
     def train_flow(self):
-        node = self._load_nodes()
-        embed = self.load_normalized_embed()
-        self.flownet = FlowNet(
-            config_path=self.config_path,
-            config_dict=self.config['flownet'])
-        name, hist = self.flownet.train(embed, node)
-        return (name, hist)
-    
-    def sample_flownet(self):
-        name = self.config_path + self.config['synth_nodes']
-        self.flownet.sample_model(self.config['target_node_count'], name)
-        
-    def lin_grid_search_flownet(self, grid_dict):
-        node = self._load_nodes()
-        embed = self.load_normalized_embed()
-        if not self.flownet:
+        with tf.device('/CPU:0'):
+            node = self._load_nodes()
+            embed = self.load_normalized_embed()
             self.flownet = FlowNet(
                 config_path=self.config_path,
                 config_dict=self.config['flownet'])
-        res = self.flownet.lin_grid_search(grid_dict, embed, node)
+            name, hist = self.flownet.train(embed, node)
+        return (name, hist)
+    
+    def sample_flownet(self, model_name=None):
+        name = self.config_path + self.config['synth_nodes']
+        if model_name:
+            self.flownet = FlowNet(
+                config_path=self.config_path,
+                config_dict=self.config['flownet'])
+            self.flownet.load_model(model_name)
+        self.flownet.sample_model(self.config['target_node_count'], name)
+        
+    def lin_grid_search_flownet(self, grid_dict):
+        with tf.device('/CPU:0'):
+            node = self._load_nodes()
+            embed = self.load_normalized_embed()
+            if not self.flownet:
+                self.flownet = FlowNet(
+                    config_path=self.config_path,
+                    config_dict=self.config['flownet'])
+            res = self.flownet.lin_grid_search(grid_dict, embed, node)
         return res
     
     def create_embedding(self):
@@ -98,9 +106,9 @@ class Orchestrator():
         res = self.inductiveController.lin_grid_search(grid_dict)
         return res 
     
-    def create_synthetic_walks(self, target_cnt, synth_node_file_name=None):
+    def create_synthetic_walks(self, target_cnt, synth_node_file_name=None, map_real_time=True):
         generated_nodes = self._load_synthetic_nodes(synth_node_file_name)
-        self.synth_walks = self.inductiveController.create_synthetic_walks(generated_nodes, target_cnt=target_cnt)
+        self.synth_walks = self.inductiveController.create_synthetic_walks(generated_nodes, target_cnt=target_cnt, map_real_time=map_real_time)
         pickle.dump(self.synth_walks, open(self.config_path + self.config['synth_walks'], "wb"))
      
     def generate_synth_graph(self):

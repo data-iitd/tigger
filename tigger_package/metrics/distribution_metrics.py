@@ -127,7 +127,7 @@ class EdgeDistributionMetrics:
         in_max =max(np.max(orig_in), np.max(synth_in))
         in_bins = [i* math.ceil(in_max/20) for i in range(20)]
         
-        plt.style.use('seaborn')
+        plt.style.use('seaborn-v0_8')
         fig, (ax1, ax2) = plt.subplots(1, 2)
         
         ax1.hist(orig_in.index, weights=orig_in.values, bins=in_bins, alpha=0.5, label='orig', density=True, edgecolor='black')

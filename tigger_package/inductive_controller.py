@@ -135,7 +135,7 @@ class InductiveController:
             print(f"Running Random Walk on {len(self.edges)} edges")
         random_walks = []
         n_walks = self.n_walks if train else self.test_n_walks
-        for edge in tqdm(random.sample(self.edges, n_walks)):
+        for edge in tqdm(random.choices(self.edges, k=n_walks)):
             rw = self.run_random_walk(edge)
             if rw is not None:
                 random_walks.append(rw)
@@ -372,7 +372,7 @@ class InductiveController:
             nb_lstm_units=128,
             edge_attr_dim=edge_dim,
             node_attr_dim=node_attr_dim,
-            clust_dim=64, # used for cluster embedding
+            clust_dim=self.cluster_emb_dim, # used for cluster embedding
             batch_size=self.batch_size,
             device=self.device,
             kl_weight=self.kl_weight,
@@ -381,7 +381,7 @@ class InductiveController:
         )
         elstm = elstm.to(self.device)
         
-        optimizer = optim.Adam(elstm.parameters(), lr=.001, weight_decay=self.weight_decay)
+        optimizer = optim.Adam(elstm.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         
         if self.verbose >= 2:
             num_params = sum(p.numel() for p in elstm.parameters() if p.requires_grad)
@@ -421,10 +421,12 @@ class InductiveController:
                 self.model.zero_grad()
                 
                 # forward + backward pas
-                y_hat= self.model(**x_batch)
+                y_cluster_id = y_batch['cluster_id']
+                y_hat= self.model(**x_batch, y_cluster_id=y_cluster_id)
+                
                 loss, log_dict = self.model.train_los(**y_hat, **y_batch)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
                 self.optimizer.step()
                 
                 for k in loss_dict.keys():
@@ -469,24 +471,38 @@ class InductiveController:
     def evaluate_model(self, test_seqs):
         """calculates the test loss over the complete epoch"""
         self.model.eval()
+        self.model.init_hidden() 
         epoch_wise_loss = []
         val_log_dicts = []
         n_seqs = len(test_seqs['x_length'])  # number of walks
+        cluster_vector = []  # temp
+        clusters = []  # temp
+        cl_hat = []  # temp
         for start_index in range(0, n_seqs-self.batch_size+1, self.batch_size):
             print("\r%d/%d" %(int(start_index),n_seqs),end="")
             batch_cnt = 0  # Batch number in Epoch
             x_batch, y_batch = self.get_batch(start_index, self.batch_size, test_seqs)
+            clusters.append(y_batch['cluster_id'])  #temp
                 
             # forward + backward pas
             y_hat= self.model(**x_batch)
+            cl_hat.append(y_hat['cluster_id_hat'])  # temp
+            
+            # temp code
+            cluster_vector.append(y_hat['cluster_id_hat_vector'])
+            # -- end temp code
+            
             _, log_dict = self.model.train_los(**y_hat, **y_batch)
                 
             batch_cnt += 1
             epoch_wise_loss.append(log_dict['loss'])
             val_log_dicts.append(log_dict)
             
-            
-            
+        
+        pickle.dump(cluster_vector, open("temp/cluster_vector.pickle", 'wb'))  # temp    
+        pickle.dump(clusters, open("temp/clusters.pickle", 'wb'))  # temp  
+        pickle.dump(cl_hat, open("temp/cl_hat.pickle", 'wb'))  # temp  
+        
         return (np.mean(epoch_wise_loss), self.mean_dict(val_log_dicts))
               
     def mean_dict(self, dict_list, calc_mean=True):
@@ -589,6 +605,7 @@ class InductiveController:
     def extract_edge(self, x_batch, new_x_batch, end_node_id):
         edges = []
         has_ended = x_batch['has_ended']
+ 
         for i, end_id in enumerate(new_x_batch['node_id']):
             if i not in has_ended:  # no end node has been generated earlier
                 if end_id != end_node_id:
@@ -600,7 +617,7 @@ class InductiveController:
         new_x_batch['has_ended'] = has_ended
         return edges
             
-    def y_hat_to_x_batch(self, y_hat, searcher, synthetic_nodes):
+    def y_hat_to_x_batch(self, y_hat, searcher, synthetic_nodes, overwrite_node_data=True):
         """removes the _hat phrase from the dict keys and maps the inferece node embed and edge
         to the generated synthetic nodes"""
         embed_dim = self.normalized_dataset.shape[1]
@@ -610,21 +627,27 @@ class InductiveController:
         for k,v in y_hat.items():
             if k != 'cluster_id_hat_vector':
                 x_batch[k[:-4]] = v
-                
-        # get nearest synthic node
-        inferred_node_vector = torch.cat((x_batch['node_embed'], x_batch['node_attr']), -1)
-        _, mapped_id = searcher.query(torch.squeeze(inferred_node_vector, 1).tolist(), k=1)
-        mapped_synth_node = synthetic_nodes.iloc[np.squeeze(mapped_id, 1)]
-        x_batch['node_id'] = np.squeeze(mapped_id, 1).tolist()
+         
+        if overwrite_node_data:        
+            # get nearest synthic node
+            inferred_node_vector = torch.cat((x_batch['node_embed'], x_batch['node_attr']), -1)
+            _, mapped_id = searcher.query(torch.squeeze(inferred_node_vector, 1).tolist(), k=1)
+            mapped_synth_node = synthetic_nodes.iloc[np.squeeze(mapped_id, 1)]
+            x_batch['node_id'] = np.squeeze(mapped_id, 1).tolist()
         
         
-        # replace inference node prop with mapped synthetic node
-        x_batch['node_embed'] = [[list(s)] for s in mapped_synth_node.iloc[:, :embed_dim].values]
-        x_batch['node_embed'] = torch.FloatTensor(x_batch['node_embed']).to(self.device)
-        x_batch['cluster_id'] = [[s] for s in self.embed_to_cluster(mapped_synth_node.iloc[:, :embed_dim].values)]
-        x_batch['cluster_id'] = torch.LongTensor(x_batch['cluster_id']).to(self.device)
-        x_batch['node_attr'] = [[list(s)] for s in mapped_synth_node.iloc[:, embed_dim:].values]
-        x_batch['node_attr'] = torch.FloatTensor(x_batch['node_attr']).to(self.device)
+            # replace inference node prop with mapped synthetic node
+            x_batch['node_embed'] = [[list(s)] for s in mapped_synth_node.iloc[:, :embed_dim].values]
+            x_batch['node_embed'] = torch.FloatTensor(x_batch['node_embed']).to(self.device)
+            x_batch['cluster_id'] = [[s] for s in self.embed_to_cluster(mapped_synth_node.iloc[:, :embed_dim].values)]
+            x_batch['cluster_id'] = torch.LongTensor(x_batch['cluster_id']).to(self.device)
+            x_batch['node_attr'] = [[list(s)] for s in mapped_synth_node.iloc[:, embed_dim:].values]
+            x_batch['node_attr'] = torch.FloatTensor(x_batch['node_attr']).to(self.device)
+            
+        else:
+            # we keep the node embed and attr and only determine the correct cluster.
+            x_batch['cluster_id'] = [[s] for s in self.embed_to_cluster(np.squeeze(x_batch['node_embed'].detach().numpy()))]  # check if we need to squeeze
+            x_batch['cluster_id'] = torch.LongTensor(x_batch['cluster_id']).to(self.device)
         
         return x_batch
         
@@ -659,7 +682,7 @@ class InductiveController:
             
         return x_batch
     
-    def create_synthetic_walks(self, synthetic_nodes, target_cnt):
+    def create_synthetic_walks(self, synthetic_nodes, target_cnt, map_real_time=True):
         """create walks using the synthetics nodes as starting point"""
         
         no_batches = math.ceil(target_cnt / self.batch_size)
@@ -679,34 +702,34 @@ class InductiveController:
             
             while step < self.l_w and len(x_batch['has_ended']) < self.batch_size:
                 y_hat = self.model(**self.get_input_batch(x_batch))
-                new_x_batch = self.y_hat_to_x_batch(y_hat, searcher, synthetic_nodes)
-                generated_seqs = generated_seqs + self.extract_edge(x_batch, new_x_batch, end_node_id)
+                new_x_batch = self.y_hat_to_x_batch(y_hat, searcher, synthetic_nodes, overwrite_node_data=map_real_time )
+                
+                if map_real_time:
+                    parsed_x_batch = new_x_batch  # output of LSTM is mapped to sampled synth nodes.
+                else:  
+                    parsed_x_batch = self.map_to_synth_nodes(new_x_batch, searcher, synthetic_nodes)  # mapped output to sampled synth nodes.
+                generated_seqs = generated_seqs + self.extract_edge(x_batch, parsed_x_batch, end_node_id)
                 x_batch = new_x_batch
                 step += 1
         
         return generated_seqs
                 
-                
+    def map_to_synth_nodes(self, x_batch, searcher, synthetic_nodes):
+        embed_dim = self.normalized_dataset.shape[1]
         
+         # get nearest synthic node
+        inferred_node_vector = torch.cat((x_batch['node_embed'], x_batch['node_attr']), -1)
+        _, mapped_id = searcher.query(torch.squeeze(inferred_node_vector, 1).tolist(), k=1)
+        mapped_synth_node = synthetic_nodes.iloc[np.squeeze(mapped_id, 1)]
+        x_batch['node_id'] = np.squeeze(mapped_id, 1).tolist()
 
-#%%
-if __name__ == "__main__":
-    node_feature_path = "data/bitcoin/feature_attributes.parquet"
-    edge_list_path = "data/bitcoin/edgelist_with_attributes.parquet"
-    graphsage_embeddings_path = "graphsage_embeddings/bitcoin/embeddings.pkl"
-    n_walks=200
-    inductiveController = InductiveController(
-        node_feature_path=node_feature_path,
-        edge_list_path=edge_list_path,
-        graphsage_embeddings_path=graphsage_embeddings_path,
-        n_walks=n_walks,
-        batch_size = 24
-    )
-    seqs = inductiveController.sample_random_Walks()
-    seqs = inductiveController.get_X_Y_from_sequences(seqs)
-    seqs = inductiveController.data_shuffle(seqs)
-    seqs = inductiveController.get_batch(0, 24, seqs)
-    
-    epoch_wise_loss, loss_dict = inductiveController.train_model()
-    
-# %%
+
+        # replace inference node prop with mapped synthetic node
+        x_batch['node_embed'] = [[list(s)] for s in mapped_synth_node.iloc[:, :embed_dim].values]
+        x_batch['node_embed'] = torch.FloatTensor(x_batch['node_embed']).to(self.device)
+        x_batch['cluster_id'] = [[s] for s in self.embed_to_cluster(mapped_synth_node.iloc[:, :embed_dim].values)]
+        x_batch['cluster_id'] = torch.LongTensor(x_batch['cluster_id']).to(self.device)
+        x_batch['node_attr'] = [[list(s)] for s in mapped_synth_node.iloc[:, embed_dim:].values]
+        x_batch['node_attr'] = torch.FloatTensor(x_batch['node_attr']).to(self.device)
+
+        return x_batch

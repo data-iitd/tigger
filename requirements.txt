@@ -8,7 +8,9 @@ scipy
 numpy
 pandas
 torch
-# scann==1.2.1
 tqdm
 scikit_learn
 Utils
+tensorflow
+PyYAML
+tensorflow_probability
