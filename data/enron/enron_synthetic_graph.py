@@ -5,7 +5,7 @@
 import os
 import pickle
 import networkx as nx
-# os.chdir('../..')
+os.chdir('../..')
 os.getcwd()
 from tigger_package.orchestrator import Orchestrator
 from tigger_package.tools import plot_adj_matrix
@@ -135,3 +135,26 @@ np.sum(list(nx.triangles(G2).values()))
 
 edm.edges
 # (3*3971) / 118880
+
+#%%
+
+import os
+import pickle
+import networkx as nx
+os.chdir('../..')
+os.getcwd()
+from tigger_package.orchestrator import Orchestrator
+from tigger_package.tools import plot_adj_matrix
+enron_folder = "data/enron/"
+orchestrator = Orchestrator(enron_folder)
+#%%
+train_metrics, embed = orchestrator.create_dgi_embedding()
+
+#%%
+nodes = orchestrator._load_nodes()
+edges = orchestrator._load_edges()
+edges = edges.rename(columns={'start': 'source', 'end': 'target'})        
+from stellargraph import StellarDiGraph
+
+
+# %%

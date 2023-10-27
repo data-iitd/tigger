@@ -9,13 +9,16 @@ import tigger_package.graphsage.graphsage_controller
 import tigger_package.flownet
 import tigger_package.inductive_controller
 import tigger_package.graph_generator
+import tigger_package.graphsage_unsup
 
 import importlib
 importlib.reload(tigger_package.graphsage.graphsage_controller)
 importlib.reload(tigger_package.flownet)
 importlib.reload(tigger_package.inductive_controller)
 importlib.reload(tigger_package.graph_generator)
+importlib.reload(tigger_package.graphsage_unsup)
 
+from tigger_package.graphsage_unsup import TorchGeoGraphSageUnsup
 from tigger_package.graph_generator import GraphGenerator
 from tigger_package.flownet import FlowNet
 from tigger_package.inductive_controller import InductiveController
@@ -70,6 +73,20 @@ class Orchestrator():
         )
         train_metrics = self.gsc.get_embedding(nodes, edges)
         return train_metrics
+    
+    def create_graphsage_embedding(self):
+        nodes = self._load_nodes()
+        edges =  self._load_edges()
+        self.graphsage = TorchGeoGraphSageUnsup(
+            config_dict = self.config['torch_geo_graphsage'],
+            path=self.config_path,
+            nodes=nodes, 
+            edges=edges,
+        )
+        train_metrics = self.graphsage.fit()
+        embed = self.graphsage.get_embedding(nodes, edges)
+        return train_metrics, embed
+        
         
     def lin_grid_search_graphsage(self, grid_dict):
         nodes = self._load_nodes()

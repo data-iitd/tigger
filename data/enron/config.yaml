@@ -1,3 +1,5 @@
+# ENRON CONFIG FILE
+
 flownet:
   overwrite: True
   flownet_config_path: 'flowmodel/'
@@ -17,6 +19,22 @@ flownet:
   # only needed when loading pretrain model
   event_dim: 37
   
+torch_geo_graphsage:
+  embed_path: 'embed/'
+  embedding_dim: 16
+   #20000  # epoch for training
+  epoch: 30
+  lr: 0.001
+  validation_fraction: 0.02
+  batch_size: 36
+  num_layers: 2
+  verbose: 2
+  num_neighbors: [5, 5]
+  dropout: 0.1
+  num_test: 0.3
+
+
+
 graphsage:
   embed_path: 'embed/'
   embedding_dim: 16
@@ -36,6 +54,14 @@ graphsage:
   verbose: 2
   level: 2
   dropout: 0.3
+
+dgi:
+  batch_size: 128
+  num_samples: [7, 7]
+  layer_sizes: [128, 128]
+  activations: ["relu", "relu"]
+  epochs: 200
+  learning_rate: 0.001
 
 lstm:
   n_walks: 3000

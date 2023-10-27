@@ -1,0 +1,76 @@
+flownet:
+  overwrite: True
+  flownet_config_path: 'flowmodel/'
+
+  # model structure
+  activation: 'sigmoid'
+  hidden_units: [8,8]
+  number_of_bijectors: 16
+  # training params
+  epoch: 1500
+  learning_rate: 0.00001
+  batch_size: 1024 
+
+  # print freq of loss during training
+  n_disp: 20
+  verbose: 2
+  # only needed when loading pretrain model
+  event_dim: 7
+  
+graphsage:
+  embed_path: 'embed/'
+  embedding_dim: 4
+  verbose_level: 2
+   #20000  # epoch for training
+  training_epoch: 3000
+  #4000 # epoch per boosting run
+  boost_epoch: 1500
+  #100 # number of boosting runs
+  boost_times: 2
+  # additional negative edges added as part of boosting
+  add_edges: 30
+  learning_rate: 0.00001
+  save_number: 0
+  validation_fraction: 0.005
+  batch_size: 1024
+  verbose: 2
+  level: 1
+  dropout: 0.3
+
+dgi:
+  batch_size: 128
+  num_samples: [7, 7]
+  layer_sizes: [128, 128]
+  activations: ["relu", "relu"]
+  epochs: 200
+  learning_rate: 0.001
+
+lstm:
+  n_walks: 3000
+  test_n_walks: 100
+  batch_size: 50
+  num_clusters: 12
+  cluster_emb_dim: 8
+  mu_hidden_dim: 64
+  l_w: 12
+  num_epochs: 400
+  minimum_walk_length: 2
+  verbose: 1
+  pca_components: 8
+  config_path: "lstm_model/"
+  lr: 0.0001
+  kl_weight: 0.001
+  dropout: 0.1
+  nb_lstm_layers: 1
+  weight_decay: 0.0005
+
+
+  
+nodes_path: "mooc_nodes.parquet"
+edges_path: "mooc_edges.parquet"
+embed_path: "embed/embedding.parquet"
+synth_walks: "synth_walks.pickle"
+synth_nodes: "synth_nodes.parquet"
+synth_graph_dir: "synth_graph/"
+target_node_count: 7000
+  

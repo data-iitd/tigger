@@ -11,6 +11,7 @@ torch
 tqdm
 scikit_learn
 Utils
-tensorflow
+# tensorflow
 PyYAML
 tensorflow_probability
+pyarrow

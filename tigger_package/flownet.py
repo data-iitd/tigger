@@ -59,7 +59,7 @@ class FlowNet():
         x_ = Input(shape=(self.event_dim,), dtype=tf.float32)
         log_prob_ = trainable_distribution.log_prob(x_)
         self.model = Model(x_, log_prob_)
-        self.model.compile(optimizer=tf.optimizers.legacy.Adam(learning_rate=self.learning_rate),
+        self.model.compile(optimizer=tf.optimizers.legacy.Adamax(learning_rate=self.learning_rate),
                     loss=lambda _, log_prob: -log_prob)
     
   
@@ -73,7 +73,11 @@ class FlowNet():
                 print(f'\rEpoch {cur_epoch+1}/{self.epoch}  {[str(k)+":"+str(v) for k,v in logs.items()]}', end="")
                 if cur_epoch % self.n_disp == 0 else False
         )
-
+        early_stop = tf.keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                min_delta=0,
+                patience=50,
+            )
 
         history = self.model.fit(x=x_data,
                             y=np.zeros((ns, 0), dtype=np.float32),
@@ -82,7 +86,7 @@ class FlowNet():
                             validation_split=0.2,
                             shuffle=True,
                             verbose=False,
-                            callbacks=[epoch_callback])
+                            callbacks=[epoch_callback, early_stop])
         return history
         
     def sample_model(self, size, name=None):
